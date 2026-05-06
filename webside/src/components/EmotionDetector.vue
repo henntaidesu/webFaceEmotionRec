@@ -13,7 +13,7 @@
 
       <!-- 无摄像头提示 -->
       <div v-if="cameraError" class="camera-placeholder">
-        <div class="placeholder-icon">📷</div>
+        <div class="placeholder-icon">{{ locale.cameraPlaceholderIcon }}</div>
         <p>{{ cameraError }}</p>
       </div>
     </div>
@@ -21,27 +21,27 @@
     <!-- 控制按钮 -->
     <div class="controls">
       <button class="btn btn-primary" @click="toggleCamera" :disabled="connecting">
-        {{ cameraActive ? '关闭摄像头' : '开启摄像头' }}
+        {{ cameraActive ? locale.closeCamera : locale.openCamera }}
       </button>
       <button
         class="btn btn-accent"
         @click="toggleDetection"
         :disabled="!cameraActive || connecting"
       >
-        {{ detecting ? '停止识别' : '开始识别' }}
+        {{ detecting ? locale.stopDetection : locale.startDetection }}
       </button>
 
       <label class="model-select-wrap">
-        <span class="model-label">检测模型</span>
-        <select v-model="detectorBackend" class="model-select" title="DeepFace 人脸检测后端">
-          <option v-for="opt in detectorOptions" :key="opt.value" :value="opt.value">
+        <span class="model-label">{{ locale.modelLabel }}</span>
+        <select v-model="detectorBackend" class="model-select">
+          <option v-for="opt in locale.detectorOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </option>
         </select>
       </label>
 
       <div class="fps-display">
-        <span>帧率</span>
+        <span>{{ locale.fps }}</span>
         <strong>{{ fps }} FPS</strong>
       </div>
     </div>
@@ -51,9 +51,9 @@
       <div v-if="faces.length > 0" class="results-panel">
         <div v-for="(face, idx) in faces" :key="idx" class="face-card">
           <div class="face-header">
-            <span class="face-index">人脸 #{{ idx + 1 }}</span>
+            <span class="face-index">{{ locale.facePrefix }}{{ idx + 1 }}</span>
             <span class="dominant-badge" :style="{ background: emotionColor(face.dominant_en) }">
-              {{ emotionEmoji(face.dominant_en) }} {{ face.dominant }}
+              {{ emotionEmoji(face.dominant_en) }} {{ translateEmotion(face.dominant) }}
             </span>
           </div>
           <div class="emotion-bars">
@@ -62,7 +62,7 @@
               :key="name"
               class="emotion-row"
             >
-              <span class="emotion-name">{{ name }}</span>
+              <span class="emotion-name">{{ translateEmotion(name) }}</span>
               <div class="bar-track">
                 <div
                   class="bar-fill"
@@ -82,7 +82,7 @@
     <!-- 无人脸提示 -->
     <transition name="fade">
       <div v-if="detecting && faces.length === 0 && !cameraError" class="no-face-tip">
-        未检测到人脸，请确认摄像头画面中有人脸
+        {{ locale.noFaceTip }}
       </div>
     </transition>
 
@@ -98,6 +98,10 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 
+const props = defineProps({
+  locale: { type: Object, required: true },
+})
+
 // ─── 响应式状态 ───────────────────────────────────────────────
 const videoEl = ref(null)
 const overlayEl = ref(null)
@@ -109,19 +113,7 @@ const faces = ref([])
 const wsError = ref('')
 const fps = ref(0)
 
-/** DeepFace detector_backend，与后端 ALLOWED_DETECTOR_BACKENDS 对应 */
-const detectorOptions = [
-  { value: 'retinaface', label: 'RetinaFace（默认，精度高）' },
-  { value: 'mtcnn', label: 'MTCNN' },
-  { value: 'opencv', label: 'OpenCV Haar' },
-  { value: 'ssd', label: 'SSD' },
-  { value: 'dlib', label: 'Dlib HOG' },
-  { value: 'mediapipe', label: 'MediaPipe' },
-  { value: 'yolov8', label: 'YOLOv8' },
-  { value: 'yunet', label: 'YuNet' },
-  { value: 'fastmtcnn', label: 'Fast MTCNN' },
-]
-const detectorBackend = ref('retinaface')
+const detectorBackend = ref(props.locale.detectorOptions[0].value)
 
 let stream = null
 let ws = null
@@ -129,26 +121,25 @@ let captureTimer = null
 let fpsTimer = null
 let frameCount = 0
 
-// 每秒发送帧数上限（控制后端负载）
 const TARGET_FPS = 5
 const FRAME_INTERVAL = Math.round(1000 / TARGET_FPS)
 
 // ─── 状态文字 / 样式 ──────────────────────────────────────────
 const statusText = computed(() => {
-  if (cameraError.value) return '摄像头错误'
-  if (connecting.value) return '连接中...'
-  if (detecting.value) return '识别中'
-  if (cameraActive.value) return '摄像头就绪'
-  return '未启动'
+  if (cameraError.value) return props.locale.statusError
+  if (connecting.value)  return props.locale.statusConnecting
+  if (detecting.value)   return props.locale.statusDetecting
+  if (cameraActive.value) return props.locale.statusReady
+  return props.locale.statusIdle
 })
 
 const statusClass = computed(() => ({
-  'status-error': !!cameraError.value,
+  'status-error':  !!cameraError.value,
   'status-active': detecting.value,
-  'status-ready': cameraActive.value && !detecting.value,
+  'status-ready':  cameraActive.value && !detecting.value,
 }))
 
-// ─── 情感颜色 / Emoji 映射 ────────────────────────────────────
+// ─── 情感颜色 / Emoji / 翻译 ──────────────────────────────────
 const EMOTION_META = {
   angry:    { color: '#ff4d4d', emoji: '😠' },
   disgust:  { color: '#a855f7', emoji: '🤢' },
@@ -176,6 +167,10 @@ function emotionEnKey(zhName) {
   return ZH_TO_EN[zhName] ?? 'neutral'
 }
 
+function translateEmotion(zhName) {
+  return props.locale.emotionMap[zhName] ?? zhName
+}
+
 // ─── 摄像头控制 ───────────────────────────────────────────────
 async function toggleCamera() {
   if (cameraActive.value) {
@@ -194,41 +189,35 @@ async function startCamera() {
     })
     videoEl.value.srcObject = stream
     await videoEl.value.play()
-
-    // 同步 canvas 尺寸
     videoEl.value.addEventListener('loadedmetadata', syncOverlaySize)
     syncOverlaySize()
     cameraActive.value = true
   } catch (e) {
-    cameraError.value = `无法访问摄像头：${e.message}`
+    cameraError.value = `${props.locale.cameraErrorPrefix}${e.message}`
   }
 }
 
 function syncOverlaySize() {
   if (!videoEl.value || !overlayEl.value) return
-  overlayEl.value.width = videoEl.value.videoWidth || 640
+  overlayEl.value.width  = videoEl.value.videoWidth  || 640
   overlayEl.value.height = videoEl.value.videoHeight || 480
 }
 
 // ─── 识别控制 ─────────────────────────────────────────────────
 function toggleDetection() {
-  if (detecting.value) {
-    stopDetection()
-  } else {
-    startDetection()
-  }
+  detecting.value ? stopDetection() : startDetection()
 }
 
 function startDetection() {
-  wsError.value = ''
+  wsError.value  = ''
   connecting.value = true
 
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${protocol}://${location.hostname}:8000/ws/emotion`)
+  ws = new WebSocket(`${protocol}://${location.hostname}:9501/ws/emotion`)
 
   ws.onopen = () => {
     connecting.value = false
-    detecting.value = true
+    detecting.value  = true
     startCapture()
     startFpsCounter()
   }
@@ -243,13 +232,11 @@ function startDetection() {
         faces.value = []
         clearOverlay()
       }
-    } catch {
-      // 忽略解析错误
-    }
+    } catch { /* 忽略解析错误 */ }
   }
 
   ws.onerror = () => {
-    wsError.value = '无法连接到后端服务，请确认后端已启动（http://localhost:8000）'
+    wsError.value = props.locale.wsErrorMsg
     stopDetection()
   }
 
@@ -259,16 +246,13 @@ function startDetection() {
 }
 
 function stopDetection() {
-  detecting.value = false
+  detecting.value  = false
   connecting.value = false
   stopCapture()
   stopFpsCounter()
   faces.value = []
   clearOverlay()
-  if (ws) {
-    ws.close()
-    ws = null
-  }
+  if (ws) { ws.close(); ws = null }
 }
 
 // ─── 帧捕获 & 发送 ────────────────────────────────────────────
@@ -277,10 +261,7 @@ function startCapture() {
 }
 
 function stopCapture() {
-  if (captureTimer) {
-    clearInterval(captureTimer)
-    captureTimer = null
-  }
+  if (captureTimer) { clearInterval(captureTimer); captureTimer = null }
 }
 
 function sendFrame() {
@@ -288,37 +269,27 @@ function sendFrame() {
   if (!videoEl.value || videoEl.value.readyState < 2) return
 
   const canvas = document.createElement('canvas')
-  canvas.width = videoEl.value.videoWidth
+  canvas.width  = videoEl.value.videoWidth
   canvas.height = videoEl.value.videoHeight
   const ctx = canvas.getContext('2d')
-  // 水平翻转（镜像效果）
   ctx.translate(canvas.width, 0)
   ctx.scale(-1, 1)
   ctx.drawImage(videoEl.value, 0, 0)
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.75)
-  ws.send(
-    JSON.stringify({
-      frame: dataUrl,
-      detector_backend: detectorBackend.value,
-    })
-  )
+  ws.send(JSON.stringify({
+    frame: canvas.toDataURL('image/jpeg', 0.75),
+    detector_backend: detectorBackend.value,
+  }))
   frameCount++
 }
 
 // ─── FPS 计数 ─────────────────────────────────────────────────
 function startFpsCounter() {
-  fpsTimer = setInterval(() => {
-    fps.value = frameCount
-    frameCount = 0
-  }, 1000)
+  fpsTimer = setInterval(() => { fps.value = frameCount; frameCount = 0 }, 1000)
 }
 
 function stopFpsCounter() {
-  if (fpsTimer) {
-    clearInterval(fpsTimer)
-    fpsTimer = null
-  }
+  if (fpsTimer) { clearInterval(fpsTimer); fpsTimer = null }
   fps.value = 0
 }
 
@@ -334,12 +305,9 @@ function drawOverlay(facesData) {
     const { x, y, w: fw, h: fh } = face.region
     if (!fw || !fh) return
 
-    // 由于发送帧时做了水平翻转，x 坐标需要镜像
     const mirroredX = w - x - fw
-
     const color = emotionColor(face.dominant_en)
 
-    // 人脸框
     ctx.strokeStyle = color
     ctx.lineWidth = 2.5
     ctx.shadowColor = color
@@ -347,8 +315,7 @@ function drawOverlay(facesData) {
     ctx.strokeRect(mirroredX, y, fw, fh)
     ctx.shadowBlur = 0
 
-    // 标签背景
-    const label = `${emotionEmoji(face.dominant_en)} ${face.dominant}`
+    const label = `${emotionEmoji(face.dominant_en)} ${translateEmotion(face.dominant)}`
     ctx.font = 'bold 15px "Segoe UI", sans-serif'
     const textW = ctx.measureText(label).width + 16
     const labelY = y > 28 ? y - 8 : y + fh + 24
@@ -366,8 +333,7 @@ function drawOverlay(facesData) {
 
 function clearOverlay() {
   if (!overlayEl.value) return
-  const ctx = overlayEl.value.getContext('2d')
-  ctx.clearRect(0, 0, overlayEl.value.width, overlayEl.value.height)
+  overlayEl.value.getContext('2d').clearRect(0, 0, overlayEl.value.width, overlayEl.value.height)
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -423,7 +389,7 @@ onUnmounted(stopAll)
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1); /* 镜像显示 */
+  transform: scaleX(-1);
   display: block;
 }
 
@@ -474,7 +440,7 @@ onUnmounted(stopAll)
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50%       { opacity: 0.4; }
 }
 
 .camera-placeholder {
@@ -631,7 +597,7 @@ onUnmounted(stopAll)
 
 .emotion-row {
   display: grid;
-  grid-template-columns: 52px 1fr 46px;
+  grid-template-columns: 56px 1fr 46px;
   align-items: center;
   gap: 10px;
 }
@@ -640,6 +606,7 @@ onUnmounted(stopAll)
   font-size: 0.8rem;
   color: var(--color-text-muted);
   text-align: right;
+  white-space: nowrap;
 }
 
 .bar-track {

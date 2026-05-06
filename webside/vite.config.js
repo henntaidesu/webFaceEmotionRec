@@ -7,11 +7,11 @@ export default defineConfig({
     port: 9500,
     proxy: {
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: 'ws://localhost:9501',
         ws: true,
       },
       '/health': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:9501',
       },
     },
   },

@@ -2,11 +2,11 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 websockets==13.1
-deepface==0.0.93
 opencv-python==4.10.0.84
 numpy==1.26.4
-# TensorFlow 2.x 已内置 GPU 支持（需要 CUDA 12.x + cuDNN 8.x）
-# 若使用 NVIDIA GPU，安装后 TensorFlow 自动识别并使用 GPU
-tensorflow==2.17.0
-tf-keras==2.17.0
-retina-face==0.0.17
+# PyTorch (CUDA 12.8) 需单独安装，见下方说明：
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+facenet-pytorch==2.6.0
+hsemotion==0.3.0
+timm==0.9.16
+Pillow>=10.0.0
