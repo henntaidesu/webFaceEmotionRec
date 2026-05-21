@@ -61,7 +61,6 @@ HSEMOTION_TO_EN = {
 }
 EMOTION_ZH = {
     "angry":    "愤怒",
-    "disgust":  "厌恶",
     "fear":     "恐惧",
     "happy":    "开心",
     "sad":      "悲伤",
