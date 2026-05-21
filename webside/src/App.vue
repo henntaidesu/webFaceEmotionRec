@@ -13,14 +13,9 @@
         <RouterView />
       </section>
 
-      <!-- 右侧：自定义内容区 -->
+      <!-- 右侧：ComfyUI -->
       <section class="panel-right">
-        <slot name="right">
-          <div class="right-placeholder">
-            <span class="placeholder-icon">🖥️</span>
-            <p class="placeholder-text">右侧内容区域</p>
-          </div>
-        </slot>
+        <ComfyUIPanel :locale="currentLocale" />
       </section>
     </main>
   </div>
@@ -29,6 +24,7 @@
 <script setup>
 import { computed, watchEffect } from 'vue'
 import { useRoute, RouterLink, RouterView } from 'vue-router'
+import ComfyUIPanel from './components/ComfyUIPanel.vue'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
 
@@ -105,34 +101,12 @@ watchEffect(() => {
   min-width: 0;
 }
 
-/* ── 右侧（自定义内容） ── */
+/* ── 右侧（ComfyUI） ── */
 .panel-right {
   min-width: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* 默认占位 */
-.right-placeholder {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  border: 2px dashed var(--color-border);
-  border-radius: var(--radius);
-  color: var(--color-text-muted);
-  min-height: 300px;
-}
-
-.placeholder-icon {
-  font-size: 2.5rem;
-}
-
-.placeholder-text {
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
+  min-height: calc(100vh - 100px);
 }
 
 /* ── 响应式：窄屏改为单列 ── */
