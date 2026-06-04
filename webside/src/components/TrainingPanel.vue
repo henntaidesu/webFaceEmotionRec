@@ -339,7 +339,7 @@ onUnmounted(stopPolling)
   transition: opacity 0.2s, transform 0.1s;
   color: #fff;
 }
-.btn-primary { background: linear-gradient(135deg, var(--color-primary), #a855f7); }
+.btn-primary { background: #2563eb; }
 .btn-primary:hover:not(:disabled) { opacity: 0.92; transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-stop { background: linear-gradient(135deg, #ff6b6b, #ee5253); }

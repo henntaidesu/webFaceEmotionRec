@@ -1,19 +1,27 @@
 <template>
   <div class="app-layout">
-    <header class="app-header">
-      <h1 class="app-title">{{ currentLocale.pageTitle }}</h1>
+    <!-- ── 左侧一级导航 ── -->
+    <aside class="sidebar">
+      <div class="brand">{{ currentLocale.pageTitle }}</div>
 
-      <nav class="app-nav">
-        <RouterLink :to="detectPath" class="nav-link">{{ currentLocale.nav.detect }}</RouterLink>
-        <RouterLink :to="trainPath" class="nav-link">{{ currentLocale.nav.train }}</RouterLink>
+      <nav class="nav">
+        <RouterLink
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          class="nav-link"
+        >
+          {{ item.label }}
+        </RouterLink>
       </nav>
 
       <RouterLink :to="langSwitchPath" class="lang-switch">
         {{ currentLocale.langSwitchLabel }}
       </RouterLink>
-    </header>
+    </aside>
 
-    <main class="app-main">
+    <!-- ── 主体内容 ── -->
+    <main class="content">
       <RouterView />
     </main>
   </div>
@@ -28,16 +36,18 @@ import ja from './locales/ja.js'
 const route = useRoute()
 
 const isJp = computed(() => route.path.startsWith('/jp'))
-const isTrain = computed(() => route.path.endsWith('/train'))
 const prefix = computed(() => (isJp.value ? '/jp' : '/cn'))
-
 const currentLocale = computed(() => (isJp.value ? ja : zh))
-const detectPath = computed(() => prefix.value)
-const trainPath = computed(() => `${prefix.value}/train`)
-// 切换语言时保留当前子页（识别 / 训练）
-const langSwitchPath = computed(
-  () => (isJp.value ? '/cn' : '/jp') + (isTrain.value ? '/train' : ''),
-)
+
+// 当前子页后缀（'' / '/train' / '/comfyui'），用于切换语言时保留页面
+const suffix = computed(() => route.path.replace(/^\/(cn|jp)/, ''))
+const langSwitchPath = computed(() => (isJp.value ? '/cn' : '/jp') + suffix.value)
+
+const navItems = computed(() => [
+  { to: prefix.value, label: currentLocale.value.nav.detect },
+  { to: `${prefix.value}/train`, label: currentLocale.value.nav.train },
+  { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyui },
+])
 
 watchEffect(() => {
   document.title = currentLocale.value.pageTitle
@@ -46,93 +56,78 @@ watchEffect(() => {
 
 <style scoped>
 .app-layout {
+  display: flex;
   min-height: 100vh;
-  background: var(--color-bg);
+  background: #000;
+}
+
+/* ── 侧边栏 ── */
+.sidebar {
   display: flex;
   flex-direction: column;
-}
-
-/* ── 顶部导航 ── */
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 32px 0;
-  width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
+  width: 200px;
   flex-shrink: 0;
+  padding: 20px 12px;
+  background: #000;
+  border-right: 1px solid var(--color-border);
 }
 
-.app-title {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--color-text);
-  letter-spacing: 0.02em;
-}
-
-.lang-switch {
-  padding: 6px 18px;
-  border-radius: 20px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  font-size: 0.82rem;
+.brand {
+  padding: 8px 12px 20px;
+  font-size: 1rem;
   font-weight: 600;
-  text-decoration: none;
-  transition: all 0.2s;
-  letter-spacing: 0.04em;
+  color: var(--color-text);
 }
 
-.lang-switch:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: rgba(108, 99, 255, 0.08);
-}
-
-/* ── 顶部导航（识别 / 训练） ── */
-.app-nav {
+.nav {
   display: flex;
-  gap: 8px;
-  margin-right: auto;
-  margin-left: 28px;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .nav-link {
-  padding: 6px 16px;
-  border-radius: 18px;
+  padding: 10px 12px;
+  border-radius: 6px;
   color: var(--color-text-muted);
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.9rem;
   text-decoration: none;
-  transition: all 0.2s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .nav-link:hover {
-  color: var(--color-primary);
-  background: rgba(108, 99, 255, 0.08);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .nav-link.router-link-exact-active {
-  color: var(--color-primary);
-  background: rgba(108, 99, 255, 0.14);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-/* ── 主体容器 ── */
-.app-main {
-  padding: 20px 32px 32px;
-  width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
+/* ── 语言切换（侧边栏底部） ── */
+.lang-switch {
+  margin-top: auto;
+  padding: 10px 12px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lang-switch:hover {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── 主体内容 ── */
+.content {
   flex: 1;
-  min-height: 0;
-}
-
-@media (max-width: 1080px) {
-  .app-header,
-  .app-main {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 24px;
 }
 </style>

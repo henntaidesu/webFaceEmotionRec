@@ -6,6 +6,7 @@ export default {
   nav: {
     detect: '感情認識',
     train: 'モデル訓練',
+    comfyui: '画像生成',
   },
 
   train: {
