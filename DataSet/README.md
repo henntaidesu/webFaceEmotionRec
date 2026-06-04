@@ -44,11 +44,43 @@ tf = transforms.Compose([
 train = datasets.ImageFolder("DataSet/fer2013/train", transform=tf)
 ```
 
-## 需手动申请的数据集（无法自动下载）
+## FER+（FER2013 的改进标注）
 
-如需更大/更高质量数据，以下需注册并同意许可后手动下载：
+微软对 FER2013 的多人投票重标注（`microsoft/FERPlus`）。本脚本取投票多数类、
+丢弃 contempt/unknown/NF，生成更干净的 **7 类** 版本。已验证与本地 FER2013 行序对齐
+（一致率 ~63%，符合 FER+ 论文）。
 
-- **AffectNet** — http://mohammadmahoor.com/affectnet/ （学术申请）
-- **RAF-DB** — http://www.whdeng.cn/raf/model1.html （申请表）
+- 生成：`python DataSet/apply_ferplus.py`（需先有 `fer2013/`）
+- 输出：`DataSet/fer2013_plus/{train,val,test}/<emotion>/*.png`（约 28.2k/3.5k/3.5k）
+- 特点：neutral 占比显著上升（FER+ 把大量歧义脸归为 neutral），噪声更低。
+
+## RAF-DB（真人脸表情，7 类）
+
+- 来源：HuggingFace `deanngkl/raf-db-7emotions`（**非官方镜像**，~2GB，20,471 张）
+- 标签（已核对，字母序）：`0 angry 1 disgust 2 fear 3 happy 4 neutral 5 sad 6 surprise`
+- 生成：`python DataSet/prepare_rafdb.py` → `DataSet/rafdb/{train,val}/<emotion>/*.png`（90/10 切分）
+- 质量远高于 FER2013，适合增强图像分支。
+
+## AffectNet（no-contempt，7 类）
+
+- 来源：HuggingFace `deanngkl/affectnet_no_contempt`（**非官方镜像**，~8GB，27,823 张）
+- 标签（ClassLabel 元数据）：`0 angry 1 disgust 2 fear 3 happy 4 neutral 5 sad 6 surprise`
+- 生成：`python DataSet/prepare_affectnet.py`（先 `snapshot_download` 下 parquet 到 `affectnet/_raw/`）
+  → `DataSet/affectnet/{train,val}/<emotion>/*.jpg`（统一 resize 224×224，90/10 切分）
+
+> ⚠️ **许可提示**：RAF-DB / AffectNet 官方均要求注册并签许可。上面两个 HuggingFace 镜像绕过了
+> 授权，属许可灰色地带——仅供个人研究。如需合规，请走官方申请：
+> AffectNet http://mohammadmahoor.com/affectnet/ ；RAF-DB http://www.whdeng.cn/raf/model1.html
+
+## VR 头戴遮挡数据集（需学术申请）
+
+戴 VR 头显的真实人脸情感数据集**无法自动下载**，见 `VR_datasets_access_guide.md`：
+- **EmoHeVRDB**（Meta Quest Pro，7 类 + 63 维 FEA）— 学术邮件 + 签 EULA
+- **HEADSET**（多模态 3D）— 许可同意
+
+自采 Quest Pro 数据见 `quest_pro_capture_spec.md` + `QuestProFaceCapture.cs`。
+
+## 其他需手动申请
+
 - **CK+** — https://www.jeffcohn.net/Resources/ （注册）
-- **FER+**（FER2013 的改进标注，8 类含 contempt）— https://github.com/microsoft/FERPlus
+- **JAFFE** — https://zenodo.org/record/3451524 （注册）
