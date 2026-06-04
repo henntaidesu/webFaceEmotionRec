@@ -23,7 +23,6 @@ export default {
     start: '开始训练',
     starting: '启动中…',
     stop: '停止训练',
-    note: '训练在后端 GPU 上运行，离开本页不影响训练，重新进入可继续查看进度。同一时刻只允许一个训练任务。',
     epoch: '轮次',
     phaseTrain: '训练',
     phaseVal: '验证',

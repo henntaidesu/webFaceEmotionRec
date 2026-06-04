@@ -78,7 +78,6 @@
           </div>
 
           <p v-if="errorMsg" class="status-msg msg-error">{{ errorMsg }}</p>
-          <p class="note">{{ t.note }}</p>
 
           <!-- 实时进度 -->
           <div v-if="status.total_epochs > 0" class="progress-section">
@@ -183,10 +182,10 @@ const selectedRunId = ref(null)    // 右侧下拉选中的 run
 const runRows = ref([])            // 选中「非当前运行」时从后端拉取的逐轮数据
 
 const form = reactive({
-  epochs: 15,
-  batch_size: 64,
-  lr: 0.0001,
-  freeze_epochs: 2,
+  epochs: 20,
+  batch_size: 128,
+  lr: 0.0002,
+  freeze_epochs: 3,
   img_size: 224,
 })
 
@@ -315,8 +314,8 @@ onMounted(async () => {
   try {
     const data = await fetchDatasets()
     datasets.value = data.datasets
-    const firstAvail = data.datasets.find((d) => d.available)
-    if (firstAvail) selected.value = [firstAvail.name]
+    // 默认全选所有可用数据集
+    selected.value = data.datasets.filter((d) => d.available).map((d) => d.name)
   } catch (e) {
     errorMsg.value = e.message
   }
@@ -438,6 +437,14 @@ onUnmounted(stopPolling)
 .ctrl-num:focus, .ctrl-select:focus { border-color: var(--color-primary); }
 .ctrl-num:disabled, .ctrl-select:disabled { opacity: 0.6; }
 
+/* 去掉数字输入框的上下箭头，用户直接输入 */
+.ctrl-num::-webkit-outer-spin-button,
+.ctrl-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ctrl-num { -moz-appearance: textfield; appearance: textfield; }
+
 /* 按钮 */
 .actions { display: flex; gap: 10px; }
 
@@ -458,8 +465,6 @@ onUnmounted(stopPolling)
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-stop { background: #d64545; }
 .btn-stop:hover { opacity: 0.92; transform: translateY(-1px); }
-
-.note { font-size: 0.72rem; color: var(--color-text-muted); line-height: 1.5; margin: 0; }
 
 .status-msg { font-size: 0.78rem; border-radius: 6px; padding: 7px 10px; margin: 0; }
 .msg-error { background: rgba(255, 107, 107, 0.12); color: #ff6b6b; }

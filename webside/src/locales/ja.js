@@ -23,7 +23,6 @@ export default {
     start: '訓練開始',
     starting: '起動中…',
     stop: '訓練停止',
-    note: '訓練はバックエンドのGPUで実行されます。本ページを離れても訓練は継続し、再度開くと進捗を確認できます。同時に実行できる訓練は1件のみです。',
     epoch: 'エポック',
     phaseTrain: '訓練',
     phaseVal: '検証',

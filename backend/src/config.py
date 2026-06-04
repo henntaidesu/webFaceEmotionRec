@@ -62,11 +62,11 @@ TRAIN_CLASSES = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surpris
 TRAIN_DATASETS = ["fer2013", "fer2013_plus", "rafdb", "affectnet"]
 
 TRAIN_DEFAULTS = {
-    "epochs": 15,
-    "batch_size": 64,
-    "lr": 1e-4,
+    "epochs": 20,
+    "batch_size": 128,
+    "lr": 2e-4,
     "weight_decay": 1e-4,
-    "freeze_epochs": 2,
+    "freeze_epochs": 3,
     "img_size": 224,
     "num_workers": 8,  # 多进程并行解码喂 GPU；Windows 下如遇兼容问题可调回 0
 }
