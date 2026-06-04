@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import config, model_registry, training
+from . import config, model_registry, train_store, training
 from .emotion import analyze_frame
 from .image_utils import decode_base64_image
 from .models import get_models
@@ -68,6 +68,21 @@ async def train_start(params: dict = Body(default=None)):
 @app.post("/api/train/stop")
 async def train_stop():
     return training.stop_training()
+
+
+@app.get("/api/train/runs")
+async def train_runs():
+    """全部历史训练运行（供右侧面板下拉切换）。"""
+    return train_store.list_runs()
+
+
+@app.get("/api/train/runs/{run_id}")
+async def train_run_detail(run_id: str):
+    """某次训练的元数据与逐轮指标。"""
+    run = train_store.get_run(run_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"error": "训练记录不存在"})
+    return run
 
 
 # ── 推理模型注册表（列出 / 切换 / 删除）─────────────────────────────

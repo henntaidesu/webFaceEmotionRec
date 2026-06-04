@@ -47,6 +47,11 @@ ROOT = Path(__file__).resolve().parents[2]
 DATASET_DIR = Path(os.getenv("DATASET_DIR", str(ROOT / "DataSet")))
 CHECKPOINT_DIR = Path(os.getenv("CHECKPOINT_DIR", str(ROOT / "backend" / "checkpoints")))
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+# 训练记录与模型按「每次训练一个文件夹」存放于此（含 metrics.csv / meta.json / 滚动权重）
+MODEL_DIR = Path(os.getenv("MODEL_DIR", str(ROOT / "Model")))
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+# 每个训练运行保留的最近权重文件数
+KEEP_CHECKPOINTS = int(os.getenv("KEEP_CHECKPOINTS", "10"))
 
 # ── 训练（图像 FER 模型）默认超参与可选数据集 ─────────────────────────
 # 训练用主干（timm），与推理用的 HSEmotion enet_b2 同族
@@ -63,5 +68,5 @@ TRAIN_DEFAULTS = {
     "weight_decay": 1e-4,
     "freeze_epochs": 2,
     "img_size": 224,
-    "num_workers": 0,  # Windows 下建议 0
+    "num_workers": 8,  # 多进程并行解码喂 GPU；Windows 下如遇兼容问题可调回 0
 }

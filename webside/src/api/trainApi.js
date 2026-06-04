@@ -32,3 +32,17 @@ export async function stopTraining() {
   if (!res.ok) throw new Error('stop failed')
   return res.json()
 }
+
+/** 列出全部历史训练运行 */
+export async function fetchRuns() {
+  const res = await fetch('/api/train/runs')
+  if (!res.ok) throw new Error('fetch runs failed')
+  return res.json()
+}
+
+/** 获取某次训练的元数据与逐轮指标 */
+export async function fetchRun(runId) {
+  const res = await fetch(`/api/train/runs/${encodeURIComponent(runId)}`)
+  if (!res.ok) throw new Error('fetch run failed')
+  return res.json()
+}

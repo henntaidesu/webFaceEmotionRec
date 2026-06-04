@@ -10,7 +10,7 @@ import threading
 import time
 from copy import deepcopy
 
-from . import config, model_registry
+from . import config, model_registry, train_store
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +26,17 @@ _JOB: dict = {
     "model_name": None,
     "epoch": 0,
     "total_epochs": 0,
+    "step": 0,                 # 当前 epoch 内已处理批次
+    "total_steps": 0,          # 当前 epoch 总批次
+    "phase": None,             # train | val
+    "running_loss": None,      # 当前 epoch 实时平均损失
     "train_loss": None,
     "train_acc": None,
     "val_loss": None,
     "val_acc": None,
     "macro_f1": None,
     "best_f1": None,
+    "epochs": [],              # 已完成各轮指标行（供右侧「训练轮次」实时显示）
     "log": [],
     "error": None,
     "ckpt_path": None,
@@ -132,11 +137,24 @@ def start_training(raw_params: dict) -> dict:
             "status": "running", "params": params,
             "model_id": params["model_id"], "model_name": params["name"],
             "epoch": 0, "total_epochs": params["epochs"],
+            "step": 0, "total_steps": 0, "phase": None, "running_loss": None,
             "train_loss": None, "train_acc": None, "val_loss": None,
-            "val_acc": None, "macro_f1": None, "best_f1": None,
+            "val_acc": None, "macro_f1": None, "best_f1": None, "epochs": [],
             "log": [], "error": None, "ckpt_path": None,
             "started_at": time.time(), "updated_at": time.time(),
         })
+
+    # 每次训练 = Model/<run_id>/ 一个独立目录（meta.json + metrics.csv + 滚动权重）
+    created_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    train_store.create_run(params["model_id"], {
+        "id": params["model_id"], "name": params["name"], "status": "running",
+        "created_at": created_at, "datasets": params["datasets"],
+        "params": {k: params[k] for k in (
+            "epochs", "batch_size", "lr", "weight_decay",
+            "freeze_epochs", "img_size", "num_workers")},
+        "total_epochs": params["epochs"], "best_f1": None, "best_epoch": None,
+    })
+
     _THREAD = threading.Thread(target=_train_loop, args=(params,), daemon=True)
     _THREAD.start()
     return {"ok": True, "params": params}
@@ -189,10 +207,14 @@ def _build_loaders(params):
         return parts[0] if len(parts) == 1 else ConcatDataset(parts)
 
     train_ds, val_ds = load("train", train_tf), load("val", eval_tf)
+    nw = params["num_workers"]
+    persistent = nw > 0
     train_loader = DataLoader(train_ds, batch_size=params["batch_size"], shuffle=True,
-                              num_workers=params["num_workers"], drop_last=True)
+                              num_workers=nw, drop_last=True,
+                              pin_memory=True, persistent_workers=persistent)
     val_loader = DataLoader(val_ds, batch_size=params["batch_size"], shuffle=False,
-                            num_workers=params["num_workers"])
+                            num_workers=nw,
+                            pin_memory=True, persistent_workers=persistent)
     return train_ds, train_loader, val_loader
 
 
@@ -223,29 +245,42 @@ def _metrics(cm):
     return float(acc), float(sum(f1s) / len(f1s))
 
 
-def _run_epoch(model, loader, criterion, optimizer, device, train: bool):
+def _run_epoch(model, loader, criterion, optimizer, device, train: bool, scaler):
     import numpy as np
     import torch
     model.train(train)
     n = len(config.TRAIN_CLASSES)
     cm = np.zeros((n, n), dtype=np.int64)
     total_loss, total = 0.0, 0
+    use_amp = device.type == "cuda"
+    phase = "train" if train else "val"
+    steps = len(loader)
+    _update(phase=phase, step=0, total_steps=steps)
     ctx = torch.enable_grad() if train else torch.no_grad()
     with ctx:
-        for img, label in loader:
+        for i, (img, label) in enumerate(loader, 1):
             if _STOP.is_set():
                 return None
-            img, label = img.to(device), label.to(device)
-            logits = model(img)
-            loss = criterion(logits, label)
+            img = img.to(device, non_blocking=True)
+            label = label.to(device, non_blocking=True)
+            with torch.autocast(device_type=device.type, enabled=use_amp):
+                logits = model(img)
+                loss = criterion(logits, label)
             if train:
                 optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
             total_loss += loss.item() * label.size(0)
             total += label.size(0)
             for t, p in zip(label.cpu().numpy(), logits.argmax(1).cpu().numpy()):
                 cm[t, p] += 1
+            # 每 10 批刷新一次实时进度（前端每秒轮询）
+            if i % 10 == 0 or i == steps:
+                if train:
+                    _update(step=i, running_loss=round(total_loss / max(total, 1), 4))
+                else:
+                    _update(step=i)
     acc, f1 = _metrics(cm)
     return total_loss / max(total, 1), acc, f1
 
@@ -268,6 +303,10 @@ def _train_loop(params: dict) -> None:
         criterion = nn.CrossEntropyLoss(weight=weights)
         optimizer = torch.optim.AdamW(model.parameters(), lr=params["lr"],
                                       weight_decay=params["weight_decay"])
+        use_cuda = device.type == "cuda"
+        scaler = torch.amp.GradScaler("cuda", enabled=use_cuda)
+        if use_cuda:
+            torch.backends.cudnn.benchmark = True  # 固定尺寸输入，自动选最快卷积算法
 
         def set_frozen(frozen):
             # timm 分类头名为 classifier；冻结其余主干参数
@@ -276,6 +315,7 @@ def _train_loop(params: dict) -> None:
                     p.requires_grad = not frozen
 
         best_f1 = 0.0
+        best_epoch = 0
         created_at = time.strftime("%Y-%m-%d %H:%M:%S")
         ckpt_path = str(config.CHECKPOINT_DIR / f"{params['model_id']}.pt")
 
@@ -284,23 +324,43 @@ def _train_loop(params: dict) -> None:
                 break
             set_frozen(epoch <= params["freeze_epochs"])
 
-            tr = _run_epoch(model, train_loader, criterion, optimizer, device, True)
+            tr = _run_epoch(model, train_loader, criterion, optimizer, device, True, scaler)
             if tr is None:
                 break
-            va = _run_epoch(model, val_loader, criterion, optimizer, device, False)
+            va = _run_epoch(model, val_loader, criterion, optimizer, device, False, scaler)
             if va is None:
                 break
             tr_loss, tr_acc, _ = tr
             va_loss, va_acc, va_f1 = va
+            is_best = va_f1 > best_f1
+            if is_best:
+                best_f1, best_epoch = va_f1, epoch
 
-            _update(epoch=epoch, train_loss=round(tr_loss, 4), train_acc=round(tr_acc, 4),
-                    val_loss=round(va_loss, 4), val_acc=round(va_acc, 4),
-                    macro_f1=round(va_f1, 4))
+            row = {
+                "epoch": epoch,
+                "train_loss": round(tr_loss, 4), "train_acc": round(tr_acc, 4),
+                "val_loss": round(va_loss, 4), "val_acc": round(va_acc, 4),
+                "macro_f1": round(va_f1, 4), "best_f1": round(best_f1, 4),
+                "is_best": is_best,
+            }
+            with _LOCK:
+                _JOB["epochs"].append(row)
+            _update(epoch=epoch, train_loss=row["train_loss"], train_acc=row["train_acc"],
+                    val_loss=row["val_loss"], val_acc=row["val_acc"],
+                    macro_f1=row["macro_f1"], best_f1=row["best_f1"])
             _log(f"[{epoch}/{params['epochs']}] "
                  f"train_acc={tr_acc:.3f} val_acc={va_acc:.3f} macroF1={va_f1:.3f}")
 
-            if va_f1 > best_f1:
-                best_f1 = va_f1
+            # 持久化逐轮指标 + 本轮权重（滚动保留最近 N 个）到 Model/<run_id>/
+            train_store.append_epoch(params["model_id"], {**row, "time": time.strftime("%H:%M:%S")})
+            train_store.save_checkpoint(params["model_id"], epoch, {
+                "model": model.state_dict(), "classes": config.TRAIN_CLASSES,
+                "backbone": config.TRAIN_BACKBONE, "params": params,
+                "epoch": epoch, "val_f1": va_f1})
+            train_store.update_meta(params["model_id"], best_f1=round(best_f1, 4),
+                                    best_epoch=best_epoch)
+
+            if is_best:
                 torch.save({"model": model.state_dict(),
                             "classes": config.TRAIN_CLASSES,
                             "backbone": config.TRAIN_BACKBONE,
@@ -321,12 +381,18 @@ def _train_loop(params: dict) -> None:
 
         if _STOP.is_set():
             _update(status="stopped")
+            train_store.update_meta(params["model_id"], status="stopped")
             _log("训练已停止")
         else:
             _update(status="done")
+            train_store.update_meta(params["model_id"], status="done")
             _log(f"训练完成，最佳 macroF1={best_f1:.3f}")
 
     except Exception as e:  # noqa: BLE001
         logger.exception("训练失败")
         _update(status="error", error=str(e))
+        try:
+            train_store.update_meta(params["model_id"], status="error")
+        except Exception:  # noqa: BLE001
+            pass
         _log(f"训练出错: {e}")
