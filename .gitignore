@@ -152,6 +152,9 @@ env/
 # Project-specific
 webside/node_modules/
 
+# 训练产出的模型权重
+backend/checkpoints/
+
 # Datasets (downloaded locally, do not commit — see DataSet/prepare_fer2013.py)
 DataSet/**
 !DataSet/*.py

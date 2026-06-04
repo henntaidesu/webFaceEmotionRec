@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import config, labels
+from . import config, labels, model_registry
 from .models import ModelBundle
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,9 @@ def analyze_frame(
         if boxes is None:
             return {"success": True, "faces": []}
 
-        idx_to_label = models.emotion.idx_to_class  # {0: 'Anger', ...}
+        # 当前激活的情感模型（内置 HSEmotion 或某个自训模型）
+        emotion_model = model_registry.get_active_recognizer(models)
+        idx_to_label = emotion_model.idx_to_class  # {0: 'Anger', ...}
         faces = []
 
         for box, prob in zip(boxes, probs):
@@ -52,7 +54,7 @@ def analyze_frame(
                 continue
 
             # 情感识别：返回 (emotion_str, scores_ndarray)
-            emotion_raw, scores = models.emotion.predict_emotions(face_crop, logits=False)
+            emotion_raw, scores = emotion_model.predict_emotions(face_crop, logits=False)
 
             dominant_en = labels.to_en(emotion_raw)
             dominant_zh = labels.to_zh(dominant_en)

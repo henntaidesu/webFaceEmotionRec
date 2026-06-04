@@ -40,6 +40,15 @@
         </select>
       </label>
 
+      <label class="model-select-wrap">
+        <span class="model-label">{{ locale.emotionModelLabel }}</span>
+        <select v-model="activeModelId" class="model-select" @change="onChangeModel">
+          <option v-for="m in emotionModels" :key="m.id" :value="m.id">
+            {{ m.name }}{{ m.val_acc != null ? ` · acc ${(m.val_acc * 100).toFixed(1)}%` : '' }}
+          </option>
+        </select>
+      </label>
+
       <div class="fps-display">
         <span>{{ locale.fps }}</span>
         <strong>{{ fps }} FPS</strong>
@@ -96,11 +105,35 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { fetchModels, setActiveModel } from '../api/modelsApi.js'
 
 const props = defineProps({
   locale: { type: Object, required: true },
 })
+
+// ─── 情感模型切换 ─────────────────────────────────────────────
+const emotionModels = ref([])
+const activeModelId = ref('hsemotion')
+
+async function loadModels() {
+  try {
+    const data = await fetchModels()
+    emotionModels.value = data.models
+    activeModelId.value = data.active
+  } catch { /* 后端暂不可达，忽略 */ }
+}
+
+async function onChangeModel() {
+  try {
+    await setActiveModel(activeModelId.value)
+  } catch (e) {
+    wsError.value = e.message
+    await loadModels()            // 切换失败则回滚到后端真实状态
+  }
+}
+
+onMounted(loadModels)
 
 // ─── 响应式状态 ───────────────────────────────────────────────
 const videoEl = ref(null)

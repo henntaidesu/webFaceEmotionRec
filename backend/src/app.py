@@ -5,10 +5,11 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from . import config
+from . import config, model_registry, training
 from .emotion import analyze_frame
 from .image_utils import decode_base64_image
 from .models import get_models
@@ -41,6 +42,61 @@ async def health_check():
         "device": str(models.device),
         "gpu": torch.cuda.get_device_name(config.CUDA_DEVICE_INDEX) if on_cuda else None,
     }
+
+
+# ── 模型训练（图像 FER）API ───────────────────────────────────────
+@app.get("/api/train/datasets")
+async def train_datasets():
+    return training.list_datasets()
+
+
+@app.get("/api/train/status")
+async def train_status():
+    return training.get_status()
+
+
+@app.post("/api/train/start")
+async def train_start(params: dict = Body(default=None)):
+    try:
+        return training.start_training(params or {})
+    except RuntimeError as e:        # 已有任务在跑
+        return JSONResponse(status_code=409, content={"ok": False, "error": str(e)})
+    except ValueError as e:          # 参数非法
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+@app.post("/api/train/stop")
+async def train_stop():
+    return training.stop_training()
+
+
+# ── 推理模型注册表（列出 / 切换 / 删除）─────────────────────────────
+@app.get("/api/models")
+async def models_list():
+    return model_registry.list_models()
+
+
+@app.post("/api/models/active")
+async def models_set_active(body: dict = Body(default=None)):
+    model_id = (body or {}).get("id")
+    if not model_id:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少模型 id"})
+    try:
+        return model_registry.set_active(model_id, models)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "模型不存在"})
+    except RuntimeError as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+@app.delete("/api/models/{model_id}")
+async def models_delete(model_id: str):
+    try:
+        return model_registry.delete_model(model_id)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "模型不存在"})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
 
 
 @app.websocket("/ws/emotion")

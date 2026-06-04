@@ -18,6 +18,7 @@ HSEMOTION_TO_EN = {
 # 英文 key → 中文显示
 EMOTION_ZH = {
     "angry":    "愤怒",
+    "disgust":  "厌恶",
     "fear":     "恐惧",
     "happy":    "开心",
     "sad":      "悲伤",

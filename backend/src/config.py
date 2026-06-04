@@ -1,5 +1,6 @@
 """集中配置。支持通过环境变量覆盖关键项。"""
 import os
+from pathlib import Path
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -39,3 +40,28 @@ DEFAULT_DETECTOR_BACKEND = "mtcnn"
 
 # ── 推理线程池大小 ────────────────────────────────────────────────
 WORKER_THREADS = int(os.getenv("WORKER_THREADS", "2"))
+
+# ── 路径（用于模型训练页面）─────────────────────────────────────────
+# src/ → backend/ → 仓库根
+ROOT = Path(__file__).resolve().parents[2]
+DATASET_DIR = Path(os.getenv("DATASET_DIR", str(ROOT / "DataSet")))
+CHECKPOINT_DIR = Path(os.getenv("CHECKPOINT_DIR", str(ROOT / "backend" / "checkpoints")))
+CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── 训练（图像 FER 模型）默认超参与可选数据集 ─────────────────────────
+# 训练用主干（timm），与推理用的 HSEmotion enet_b2 同族
+TRAIN_BACKBONE = os.getenv("TRAIN_BACKBONE", "efficientnet_b2")
+# 7 类，顺序与各数据集 ImageFolder 字母序一致
+TRAIN_CLASSES = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+# 可训练的数据集白名单 → 相对 DATASET_DIR 的目录名
+TRAIN_DATASETS = ["fer2013", "fer2013_plus", "rafdb", "affectnet"]
+
+TRAIN_DEFAULTS = {
+    "epochs": 15,
+    "batch_size": 64,
+    "lr": 1e-4,
+    "weight_decay": 1e-4,
+    "freeze_epochs": 2,
+    "img_size": 224,
+    "num_workers": 0,  # Windows 下建议 0
+}

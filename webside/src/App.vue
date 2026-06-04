@@ -2,21 +2,19 @@
   <div class="app-layout">
     <header class="app-header">
       <h1 class="app-title">{{ currentLocale.pageTitle }}</h1>
-      <RouterLink :to="currentLocale.langSwitchPath" class="lang-switch">
+
+      <nav class="app-nav">
+        <RouterLink :to="detectPath" class="nav-link">{{ currentLocale.nav.detect }}</RouterLink>
+        <RouterLink :to="trainPath" class="nav-link">{{ currentLocale.nav.train }}</RouterLink>
+      </nav>
+
+      <RouterLink :to="langSwitchPath" class="lang-switch">
         {{ currentLocale.langSwitchLabel }}
       </RouterLink>
     </header>
 
     <main class="app-main">
-      <!-- 左侧：情感识别 -->
-      <section class="panel-left">
-        <RouterView />
-      </section>
-
-      <!-- 右侧：ComfyUI -->
-      <section class="panel-right">
-        <ComfyUIPanel :locale="currentLocale" />
-      </section>
+      <RouterView />
     </main>
   </div>
 </template>
@@ -24,13 +22,22 @@
 <script setup>
 import { computed, watchEffect } from 'vue'
 import { useRoute, RouterLink, RouterView } from 'vue-router'
-import ComfyUIPanel from './components/ComfyUIPanel.vue'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
 
-const localeMap = { '/cn': zh, '/jp': ja }
 const route = useRoute()
-const currentLocale = computed(() => localeMap[route.path] ?? zh)
+
+const isJp = computed(() => route.path.startsWith('/jp'))
+const isTrain = computed(() => route.path.endsWith('/train'))
+const prefix = computed(() => (isJp.value ? '/jp' : '/cn'))
+
+const currentLocale = computed(() => (isJp.value ? ja : zh))
+const detectPath = computed(() => prefix.value)
+const trainPath = computed(() => `${prefix.value}/train`)
+// 切换语言时保留当前子页（识别 / 训练）
+const langSwitchPath = computed(
+  () => (isJp.value ? '/cn' : '/jp') + (isTrain.value ? '/train' : ''),
+)
 
 watchEffect(() => {
   document.title = currentLocale.value.pageTitle
@@ -83,11 +90,36 @@ watchEffect(() => {
   background: rgba(108, 99, 255, 0.08);
 }
 
-/* ── 主体两栏 ── */
+/* ── 顶部导航（识别 / 训练） ── */
+.app-nav {
+  display: flex;
+  gap: 8px;
+  margin-right: auto;
+  margin-left: 28px;
+}
+
+.nav-link {
+  padding: 6px 16px;
+  border-radius: 18px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.nav-link:hover {
+  color: var(--color-primary);
+  background: rgba(108, 99, 255, 0.08);
+}
+
+.nav-link.router-link-exact-active {
+  color: var(--color-primary);
+  background: rgba(108, 99, 255, 0.14);
+}
+
+/* ── 主体容器 ── */
 .app-main {
-  display: grid;
-  grid-template-columns: 680px 1fr;
-  gap: 24px;
   padding: 20px 32px 32px;
   width: 100%;
   max-width: 1440px;
@@ -96,25 +128,7 @@ watchEffect(() => {
   min-height: 0;
 }
 
-/* ── 左侧（情感识别） ── */
-.panel-left {
-  min-width: 0;
-}
-
-/* ── 右侧（ComfyUI） ── */
-.panel-right {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: calc(100vh - 100px);
-}
-
-/* ── 响应式：窄屏改为单列 ── */
 @media (max-width: 1080px) {
-  .app-main {
-    grid-template-columns: 1fr;
-  }
-
   .app-header,
   .app-main {
     padding-left: 16px;

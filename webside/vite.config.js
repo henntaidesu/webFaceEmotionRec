@@ -19,6 +19,9 @@ export default defineConfig(({ mode }) => {
         '/health': {
           target: 'http://localhost:9501',
         },
+        '/api': {
+          target: 'http://localhost:9501',
+        },
         '/comfyui': {
           target: comfyTarget,
           changeOrigin: true,
