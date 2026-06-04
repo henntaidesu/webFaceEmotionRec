@@ -17,7 +17,7 @@ export default {
   statusIdle: '未起動',
 
   noFaceTip: '顔が検出されていません。カメラに顔が映っているか確認してください',
-  wsErrorMsg: 'バックエンドサービスに接続できません。バックエンドが起動しているか確認してください（http://localhost:9501）',
+  wsErrorMsg: 'バックエンドサービスに接続できません。バックエンドが起動しているか確認してください（ポート 9501）',
   cameraErrorPrefix: 'カメラにアクセスできません：',
   cameraPlaceholderIcon: '📷',
   facePrefix: '顔 #',

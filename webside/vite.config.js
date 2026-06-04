@@ -8,7 +8,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     server: {
+      host: '0.0.0.0',
       port: 9500,
+      strictPort: true,
       proxy: {
         '/ws': {
           target: 'ws://localhost:9501',
@@ -24,6 +26,11 @@ export default defineConfig(({ mode }) => {
           ws: true,
         },
       },
+    },
+    preview: {
+      host: '0.0.0.0',
+      port: 9500,
+      strictPort: true,
     },
   }
 })

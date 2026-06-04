@@ -213,7 +213,7 @@ function startDetection() {
   connecting.value = true
 
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${protocol}://${location.hostname}:9501/ws/emotion`)
+  ws = new WebSocket(`${protocol}://${location.host}/ws/emotion`)
 
   ws.onopen = () => {
     connecting.value = false

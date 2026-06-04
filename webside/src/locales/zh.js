@@ -17,7 +17,7 @@ export default {
   statusIdle: '未启动',
 
   noFaceTip: '未检测到人脸，请确认摄像头画面中有人脸',
-  wsErrorMsg: '无法连接到后端服务，请确认后端已启动（http://localhost:9501）',
+  wsErrorMsg: '无法连接到后端服务，请确认后端已启动（端口 9501）',
   cameraErrorPrefix: '无法访问摄像头：',
   cameraPlaceholderIcon: '📷',
   facePrefix: '人脸 #',
