@@ -9,10 +9,12 @@ from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import config, model_registry, train_store, training
-from .emotion import analyze_frame
+from .. import config
+from ..use_model import model_registry
+from ..use_model.emotion import analyze_frame
+from ..use_model.models import get_models
+from ..use_train import train_store, training
 from .image_utils import decode_base64_image
-from .models import get_models
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -54,14 +54,18 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 KEEP_CHECKPOINTS = int(os.getenv("KEEP_CHECKPOINTS", "10"))
 
 # ── 训练（图像 FER 模型）默认超参与可选数据集 ─────────────────────────
-# 训练用主干（timm），与推理用的 HSEmotion enet_b2 同族
+# 训练用主干：timm efficientnet_b2（预训练微调）或 vr_cnn（自定义 CNN，
+# 面向 VR 头显遮挡场景，见 use_train/cnn_model.py）
 TRAIN_BACKBONE = os.getenv("TRAIN_BACKBONE", "efficientnet_b2")
+TRAIN_BACKBONE_CHOICES = ["efficientnet_b2", "vr_cnn"]
 # 7 类，顺序与各数据集 ImageFolder 字母序一致
 TRAIN_CLASSES = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 # 可训练的数据集白名单 → 相对 DATASET_DIR 的目录名
 TRAIN_DATASETS = ["fer2013", "fer2013_plus", "rafdb", "affectnet"]
 
 TRAIN_DEFAULTS = {
+    "backbone": TRAIN_BACKBONE,
+    "vr_occlusion": True,   # 训练时模拟 VR 头显遮挡上半脸（验证集按固定遮挡评估）
     "epochs": 20,
     "batch_size": 128,
     "lr": 2e-4,

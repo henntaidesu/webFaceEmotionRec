@@ -9,7 +9,7 @@ patch_torch_load()
 from facenet_pytorch import MTCNN  # noqa: E402
 from hsemotion.facial_emotions import HSEmotionRecognizer  # noqa: E402
 
-from . import config  # noqa: E402
+from .. import config  # noqa: E402
 from .device import select_device  # noqa: E402
 
 logger = logging.getLogger(__name__)

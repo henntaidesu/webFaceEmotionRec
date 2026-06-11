@@ -5,7 +5,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import config, labels, model_registry
+from .. import config
+from . import labels, model_registry
 from .models import ModelBundle
 
 logger = logging.getLogger(__name__)

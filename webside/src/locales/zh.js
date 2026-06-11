@@ -10,11 +10,14 @@ export default {
   },
 
   train: {
-    title: '图像情感模型训练（EfficientNet-B2，7 类）',
+    title: '图像情感模型训练（7 类）',
     datasets: '训练数据集（可多选，自动合并）',
     noDatasets: '未找到数据集，请先在 DataSet/ 下准备数据。',
     unavailable: '不可用',
     params: '超参数',
+    backbone: '主干网络',
+    backboneVrCnn: 'VR-CNN（自定义）',
+    vrOcclusion: 'VR 遮挡增强',
     epochs: '训练轮数',
     batchSize: '批大小',
     lr: '学习率',

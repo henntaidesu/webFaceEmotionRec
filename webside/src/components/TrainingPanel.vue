@@ -42,6 +42,17 @@
             <label class="field-label">{{ t.params }}</label>
             <div class="param-grid">
               <label class="param">
+                <span>{{ t.backbone }}</span>
+                <select v-model="form.backbone" :disabled="isRunning" class="ctrl-num wide">
+                  <option value="vr_cnn">{{ t.backboneVrCnn }}</option>
+                  <option value="efficientnet_b2">EfficientNet-B2</option>
+                </select>
+              </label>
+              <label class="param">
+                <span>{{ t.vrOcclusion }}</span>
+                <input type="checkbox" v-model="form.vr_occlusion" :disabled="isRunning" />
+              </label>
+              <label class="param">
                 <span>{{ t.epochs }}</span>
                 <input type="number" v-model.number="form.epochs" min="1" max="200" :disabled="isRunning" class="ctrl-num" />
               </label>
@@ -55,7 +66,7 @@
               </label>
               <label class="param">
                 <span>{{ t.freezeEpochs }}</span>
-                <input type="number" v-model.number="form.freeze_epochs" min="0" max="50" :disabled="isRunning" class="ctrl-num" />
+                <input type="number" v-model.number="form.freeze_epochs" min="0" max="50" :disabled="isRunning || form.backbone === 'vr_cnn'" class="ctrl-num" />
               </label>
               <label class="param">
                 <span>{{ t.imgSize }}</span>
@@ -182,6 +193,8 @@ const selectedRunId = ref(null)    // 右侧下拉选中的 run
 const runRows = ref([])            // 选中「非当前运行」时从后端拉取的逐轮数据
 
 const form = reactive({
+  backbone: 'vr_cnn',
+  vr_occlusion: true,
   epochs: 20,
   batch_size: 128,
   lr: 0.0002,

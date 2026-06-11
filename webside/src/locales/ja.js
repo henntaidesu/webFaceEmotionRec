@@ -10,11 +10,14 @@ export default {
   },
 
   train: {
-    title: '画像感情モデル訓練（EfficientNet-B2、7クラス）',
+    title: '画像感情モデル訓練（7クラス）',
     datasets: '訓練データセット（複数選択可・自動結合）',
     noDatasets: 'データセットが見つかりません。先に DataSet/ に用意してください。',
     unavailable: '利用不可',
     params: 'ハイパーパラメータ',
+    backbone: 'バックボーン',
+    backboneVrCnn: 'VR-CNN（カスタム）',
+    vrOcclusion: 'VR遮蔽オーグメント',
     epochs: 'エポック数',
     batchSize: 'バッチサイズ',
     lr: '学習率',

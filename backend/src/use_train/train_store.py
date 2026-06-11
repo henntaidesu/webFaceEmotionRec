@@ -14,7 +14,7 @@ import logging
 import os
 import re
 
-from . import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 

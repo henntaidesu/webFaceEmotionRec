@@ -15,7 +15,7 @@ import threading
 
 import numpy as np
 
-from . import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,10 @@ _cache: dict = {}  # id -> TrainedEmotionRecognizer
 # ── 自训模型识别器（接口对齐 HSEmotionRecognizer）─────────────────
 class TrainedEmotionRecognizer:
     def __init__(self, ckpt_path: str, device):
-        import timm
         import torch
         from torchvision import transforms
+
+        from ..use_train.cnn_model import create_model
 
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         self.classes = ckpt["classes"]
@@ -42,8 +43,8 @@ class TrainedEmotionRecognizer:
 
         self._device = device
         self._torch = torch
-        self.model = timm.create_model(backbone, pretrained=False,
-                                       num_classes=len(self.classes))
+        # vr_cnn → 自定义 CNN；其余 → timm（与训练端建模逻辑一致）
+        self.model = create_model(backbone, len(self.classes), pretrained=False)
         self.model.load_state_dict(ckpt["model"])
         self.model.eval().to(device)
 

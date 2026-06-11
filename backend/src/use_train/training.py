@@ -10,7 +10,9 @@ import threading
 import time
 from copy import deepcopy
 
-from . import config, model_registry, train_store
+from .. import config
+from ..use_model import model_registry
+from . import train_store
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +103,13 @@ def _parse_params(raw: dict) -> dict:
     datasets = [x for x in datasets if x in config.TRAIN_DATASETS]
     if not datasets:
         raise ValueError("未选择有效数据集")
+    backbone = str(raw.get("backbone", d["backbone"]))
+    if backbone not in config.TRAIN_BACKBONE_CHOICES:
+        raise ValueError(f"未知主干网络: {backbone}")
     p = {
         "datasets": datasets,
+        "backbone": backbone,
+        "vr_occlusion": bool(raw.get("vr_occlusion", d["vr_occlusion"])),
         "epochs": int(raw.get("epochs", d["epochs"])),
         "batch_size": int(raw.get("batch_size", d["batch_size"])),
         "lr": float(raw.get("lr", d["lr"])),
@@ -150,8 +157,8 @@ def start_training(raw_params: dict) -> dict:
         "id": params["model_id"], "name": params["name"], "status": "running",
         "created_at": created_at, "datasets": params["datasets"],
         "params": {k: params[k] for k in (
-            "epochs", "batch_size", "lr", "weight_decay",
-            "freeze_epochs", "img_size", "num_workers")},
+            "backbone", "vr_occlusion", "epochs", "batch_size", "lr",
+            "weight_decay", "freeze_epochs", "img_size", "num_workers")},
         "total_epochs": params["epochs"], "best_f1": None, "best_epoch": None,
     })
 
@@ -177,18 +184,24 @@ def _build_loaders(params):
     from torch.utils.data import ConcatDataset, DataLoader
     from torchvision import datasets, transforms
 
+    from .cnn_model import VRMask
+
     sz = params["img_size"]
+    vr = params["vr_occlusion"]
     mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    # VR 遮挡增强：训练随机遮挡上半脸；验证固定遮挡，使指标反映佩戴 VR 时的精度
     train_tf = transforms.Compose([
         transforms.Resize((sz, sz)),
         transforms.RandomHorizontalFlip(),
         transforms.ColorJitter(0.2, 0.2, 0.2),
         transforms.ToTensor(),
+        *([VRMask(train=True)] if vr else []),
         transforms.Normalize(mean, std),
     ])
     eval_tf = transforms.Compose([
         transforms.Resize((sz, sz)),
         transforms.ToTensor(),
+        *([VRMask(train=False)] if vr else []),
         transforms.Normalize(mean, std),
     ])
 
@@ -287,19 +300,23 @@ def _run_epoch(model, loader, criterion, optimizer, device, train: bool, scaler)
 
 def _train_loop(params: dict) -> None:
     try:
-        import timm
         import torch
         import torch.nn as nn
-        from .device import select_device
+        from ..use_model.device import select_device
+        from .cnn_model import VR_CNN_ID, create_model
 
         device = select_device()
+        backbone = params["backbone"]
+        pretrained = backbone != VR_CNN_ID  # 自定义 CNN 无预训练权重，从零训练
         _log(f"加载数据集 {params['datasets']} …")
         train_ds, train_loader, val_loader = _build_loaders(params)
-        _log(f"训练样本 {len(train_ds)}，开始构建模型 {config.TRAIN_BACKBONE}")
+        if params["vr_occlusion"]:
+            _log("已启用 VR 头显遮挡增强（验证集按固定遮挡评估）")
+        _log(f"训练样本 {len(train_ds)}，开始构建模型 {backbone}")
 
         weights, counts = _class_weights(train_ds, device)
-        model = timm.create_model(config.TRAIN_BACKBONE, pretrained=True,
-                                  num_classes=len(config.TRAIN_CLASSES)).to(device)
+        model = create_model(backbone, len(config.TRAIN_CLASSES),
+                             pretrained=pretrained).to(device)
         criterion = nn.CrossEntropyLoss(weight=weights)
         optimizer = torch.optim.AdamW(model.parameters(), lr=params["lr"],
                                       weight_decay=params["weight_decay"])
@@ -322,7 +339,8 @@ def _train_loop(params: dict) -> None:
         for epoch in range(1, params["epochs"] + 1):
             if _STOP.is_set():
                 break
-            set_frozen(epoch <= params["freeze_epochs"])
+            # 仅预训练主干需要先冻结微调；从零训练的自定义 CNN 全程放开
+            set_frozen(pretrained and epoch <= params["freeze_epochs"])
 
             tr = _run_epoch(model, train_loader, criterion, optimizer, device, True, scaler)
             if tr is None:
@@ -355,7 +373,7 @@ def _train_loop(params: dict) -> None:
             train_store.append_epoch(params["model_id"], {**row, "time": time.strftime("%H:%M:%S")})
             train_store.save_checkpoint(params["model_id"], epoch, {
                 "model": model.state_dict(), "classes": config.TRAIN_CLASSES,
-                "backbone": config.TRAIN_BACKBONE, "params": params,
+                "backbone": backbone, "params": params,
                 "epoch": epoch, "val_f1": va_f1})
             train_store.update_meta(params["model_id"], best_f1=round(best_f1, 4),
                                     best_epoch=best_epoch)
@@ -363,13 +381,13 @@ def _train_loop(params: dict) -> None:
             if is_best:
                 torch.save({"model": model.state_dict(),
                             "classes": config.TRAIN_CLASSES,
-                            "backbone": config.TRAIN_BACKBONE,
+                            "backbone": backbone,
                             "params": params, "epoch": epoch, "val_f1": va_f1},
                            ckpt_path)
                 # 写元数据 sidecar，供推理端列表/切换
                 model_registry.register_trained({
                     "id": params["model_id"], "name": params["name"], "type": "trained",
-                    "backbone": config.TRAIN_BACKBONE, "classes": config.TRAIN_CLASSES,
+                    "backbone": backbone, "classes": config.TRAIN_CLASSES,
                     "img_size": params["img_size"], "datasets": params["datasets"],
                     "epochs": params["epochs"], "best_epoch": epoch,
                     "val_acc": round(va_acc, 4), "val_f1": round(va_f1, 4),
