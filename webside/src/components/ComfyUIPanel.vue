@@ -27,8 +27,20 @@
 
       <!-- 在线操作面板 -->
       <template v-else>
-        <!-- 模型 -->
+        <!-- 工作流（服务器端工作区） -->
         <div class="field">
+          <div class="field-label-row">
+            <label class="field-label">{{ locale.comfyWorkflow }}</label>
+            <button class="icon-btn wf-refresh" :title="locale.comfyRetry" @click="loadWorkflows">↻</button>
+          </div>
+          <select v-model="selectedWorkflow" class="ctrl-select">
+            <option value="">{{ locale.comfyWorkflowBuiltin }}</option>
+            <option v-for="wf in workflows" :key="wf" :value="wf">{{ wf.replace(/\.json$/, '') }}</option>
+          </select>
+        </div>
+
+        <!-- 模型（仅内置工作流） -->
+        <div v-if="!selectedWorkflow" class="field">
           <label class="field-label">{{ locale.comfyModel }}</label>
           <select v-model="form.checkpoint" class="ctrl-select">
             <option v-if="checkpoints.length === 0" value="">{{ locale.comfyLoadingModels }}</option>
@@ -37,7 +49,7 @@
         </div>
 
         <!-- 尺寸 -->
-        <div class="field">
+        <div v-if="!selectedWorkflow" class="field">
           <label class="field-label">{{ locale.comfySize }}</label>
           <div class="row-group">
             <input type="number" v-model.number="form.width"  class="ctrl-num" min="64" max="2048" step="64" />
@@ -52,6 +64,23 @@
                 @click="form.width = p.w; form.height = p.h"
               >{{ p.label }}</button>
             </div>
+          </div>
+        </div>
+
+        <!-- VR 情感预设 -->
+        <div class="field">
+          <div class="field-label-row">
+            <label class="field-label">{{ locale.comfyVrPreset }}</label>
+            <button class="use-emotion-btn" @click="useRandomPrompt">🎲 {{ locale.comfyRandomPrompt }}</button>
+          </div>
+          <div class="preset-btns">
+            <button
+              v-for="p in vrPresets"
+              :key="p.key"
+              class="preset-btn"
+              :class="{ active: activeVrPreset === p.key }"
+              @click="applyVrPreset(p)"
+            >{{ p.label }}</button>
           </div>
         </div>
 
@@ -86,7 +115,7 @@
         </div>
 
         <!-- 步数 / CFG -->
-        <div class="two-col">
+        <div v-if="!selectedWorkflow" class="two-col">
           <div class="field">
             <label class="field-label">{{ locale.comfySteps }} <strong class="val">{{ form.steps }}</strong></label>
             <input type="range" v-model.number="form.steps" min="1" max="100" class="slider" />
@@ -98,7 +127,7 @@
         </div>
 
         <!-- 采样器 / 调度器 -->
-        <div class="two-col">
+        <div v-if="!selectedWorkflow" class="two-col">
           <div class="field">
             <label class="field-label">{{ locale.comfySampler }}</label>
             <select v-model="form.sampler" class="ctrl-select">
@@ -124,7 +153,7 @@
         </div>
 
         <!-- 生成按钮 -->
-        <button class="btn-generate" :disabled="generating || !form.checkpoint" @click="generate">
+        <button class="btn-generate" :disabled="generating || (!selectedWorkflow && !form.checkpoint)" @click="generate">
           <span v-if="generating">
             {{ locale.comfyGenerating }}
             <span v-if="progress.max > 0"> · {{ progress.current }}/{{ progress.max }}</span>
@@ -174,6 +203,11 @@ import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import {
   checkOnline,
   fetchCheckpoints,
+  fetchWorkflows,
+  fetchWorkflow,
+  fetchObjectInfo,
+  uiToApiFormat,
+  applyPromptOverrides,
   queuePrompt,
   getHistory,
   imageUrl,
@@ -184,6 +218,7 @@ import {
   SCHEDULERS,
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
+import { randomVrPrompt } from '../api/vrPrompts.js'
 
 const props = defineProps({
   locale: { type: Object, required: true },
@@ -212,6 +247,9 @@ async function retryConn() {
   if (online.value && checkpoints.value.length === 0) {
     loadCheckpoints()
   }
+  if (online.value && workflows.value.length === 0) {
+    loadWorkflows()
+  }
 }
 
 async function loadCheckpoints() {
@@ -222,6 +260,16 @@ async function loadCheckpoints() {
       form.checkpoint = list[0]
     }
   } catch { /* 忽略，不阻断流程 */ }
+}
+
+// ── 服务器端工作流（工作区） ───────────────────────────
+const workflows = ref([])
+const selectedWorkflow = ref('')
+
+async function loadWorkflows() {
+  try {
+    workflows.value = await fetchWorkflows()
+  } catch { workflows.value = [] }
 }
 
 // ── 表单状态 ─────────────────────────────────────────
@@ -253,6 +301,51 @@ function appendEmotionPrompt() {
     : kw
 }
 
+// ── VR 情感提示词预设（眼部被 VR 头显遮挡，情绪靠口部/姿态表达） ──
+const VR_BASE_PROMPT =
+  'masterpiece, best quality, ultra detailed, photorealistic portrait photograph of one person ' +
+  'wearing a modern white VR headset, head-mounted display covering both eyes, ' +
+  'upper half of face occluded by VR goggles, mouth and chin clearly visible, ' +
+  'front view, studio lighting, clean neutral background, sharp focus, detailed skin texture'
+
+const VR_NEGATIVE_PROMPT =
+  'lowres, worst quality, blurry, bad anatomy, deformed face, extra fingers, extra limbs, ' +
+  'cartoon, anime, painting, sketch, text, watermark, logo, visible eyes, no headset, multiple people'
+
+const VR_EMOTIONS = [
+  { key: 'happy',    zh: '开心', prompt: 'joyful expression, wide open-mouth smile, grinning, raised cheeks, cheerful mood' },
+  { key: 'sad',      zh: '悲伤', prompt: 'sad expression, downturned mouth corners, frowning lips, sorrowful mood, slightly lowered head' },
+  { key: 'angry',    zh: '愤怒', prompt: 'angry expression, clenched jaw, gritted teeth, tense mouth, aggressive mood' },
+  { key: 'surprise', zh: '惊讶', prompt: 'surprised expression, wide open mouth, dropped jaw, astonished mood, hands raised near face' },
+  { key: 'fear',     zh: '恐惧', prompt: 'fearful expression, trembling open mouth, tense grimace, frightened mood, defensive posture' },
+  { key: 'disgust',  zh: '厌恶', prompt: 'disgusted expression, wrinkled nose, raised upper lip, sneering mouth, repulsed mood' },
+  { key: 'neutral',  zh: '平静', prompt: 'neutral expression, relaxed closed mouth, calm composed mood' },
+]
+
+const activeVrPreset = ref('')
+const vrPresets = computed(() =>
+  VR_EMOTIONS.map((e) => ({ ...e, label: props.locale.emotionMap[e.zh] ?? e.zh })),
+)
+
+function applyVrPreset(p) {
+  activeVrPreset.value = p.key
+  form.positive = `${VR_BASE_PROMPT}, ${p.prompt}`
+  form.negative = VR_NEGATIVE_PROMPT
+}
+
+/** 从 7000 条提示词库中随机抽取一条（已选情感预设则在该情感内抽取） */
+async function useRandomPrompt() {
+  try {
+    const { emotion, prompt } = await randomVrPrompt(activeVrPreset.value)
+    activeVrPreset.value = emotion
+    form.positive = prompt
+    form.negative = VR_NEGATIVE_PROMPT
+  } catch (err) {
+    statusMsg.value = `${props.locale.comfyError}：${err.message}`
+    statusMsgClass.value = 'msg-error'
+  }
+}
+
 // ── 生成流程 ─────────────────────────────────────────
 const generating = ref(false)
 const progress = reactive({ current: 0, max: 0, node: '' })
@@ -269,8 +362,37 @@ const progressPct = computed(() => {
 let ws  = null
 let pollTimer = null
 
+/** 组装最终提交的工作流：服务器端工作区 或 内置 txt2img */
+async function buildWorkflow() {
+  if (!selectedWorkflow.value) {
+    return buildTxt2ImgWorkflow({
+      positive:   form.positive,
+      negative:   form.negative,
+      checkpoint: form.checkpoint,
+      steps:      form.steps,
+      cfg:        form.cfg,
+      width:      form.width,
+      height:     form.height,
+      sampler:    form.sampler,
+      scheduler:  form.scheduler,
+      seed:       form.seed,
+    })
+  }
+  const [raw, objectInfo] = await Promise.all([
+    fetchWorkflow(selectedWorkflow.value),
+    fetchObjectInfo(),
+  ])
+  // userdata 中保存的工作区通常是 UI 格式（含 nodes 数组），需转换；API 格式直接使用
+  const apiWorkflow = Array.isArray(raw?.nodes) ? uiToApiFormat(raw, objectInfo) : raw
+  return applyPromptOverrides(apiWorkflow, {
+    positive: form.positive,
+    negative: form.negative,
+    seed:     form.seed,
+  })
+}
+
 async function generate() {
-  if (generating.value || !form.checkpoint) return
+  if (generating.value || (!selectedWorkflow.value && !form.checkpoint)) return
 
   generating.value = true
   resultImages.value = []
@@ -282,24 +404,12 @@ async function generate() {
   const clientId = makeClientId()
 
   try {
+    const workflow = await buildWorkflow()
+
     // 建立 WebSocket 连接（用于进度推送）
     ws = openProgressWS(clientId)
 
-    const { prompt_id } = await queuePrompt(
-      clientId,
-      buildTxt2ImgWorkflow({
-        positive:   form.positive,
-        negative:   form.negative,
-        checkpoint: form.checkpoint,
-        steps:      form.steps,
-        cfg:        form.cfg,
-        width:      form.width,
-        height:     form.height,
-        sampler:    form.sampler,
-        scheduler:  form.scheduler,
-        seed:       form.seed,
-      }),
-    )
+    const { prompt_id } = await queuePrompt(clientId, workflow)
 
     await waitForCompletion(ws, prompt_id)
   } catch (err) {
@@ -691,6 +801,13 @@ onUnmounted(() => {
   background: var(--color-primary);
   border: 2px solid var(--color-bg);
   cursor: pointer;
+}
+
+/* ── 工作流刷新按钮 ── */
+.wf-refresh {
+  width: 22px;
+  height: 22px;
+  font-size: 0.78rem;
 }
 
 /* ── 情感快填按钮 ── */
