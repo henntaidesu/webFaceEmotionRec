@@ -46,6 +46,7 @@ const langSwitchPath = computed(() => (isJp.value ? '/cn' : '/jp') + suffix.valu
 const navItems = computed(() => [
   { to: prefix.value, label: currentLocale.value.nav.detect },
   { to: `${prefix.value}/train`, label: currentLocale.value.nav.train },
+  { to: `${prefix.value}/eval`, label: currentLocale.value.nav.evaluate },
   { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyui },
 ])
 

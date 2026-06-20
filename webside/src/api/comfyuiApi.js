@@ -213,6 +213,7 @@ export function buildTxt2ImgWorkflow({
   sampler,
   scheduler,
   seed,
+  filename_prefix = 'FaceEmotion',
 }) {
   const resolvedSeed =
     seed < 0 ? Math.floor(Math.random() * 999_999_999_999) : seed
@@ -255,7 +256,7 @@ export function buildTxt2ImgWorkflow({
     },
     '9': {
       class_type: 'SaveImage',
-      inputs: { filename_prefix: 'FaceEmotion', images: ['8', 0] },
+      inputs: { filename_prefix, images: ['8', 0] },
     },
   }
 }

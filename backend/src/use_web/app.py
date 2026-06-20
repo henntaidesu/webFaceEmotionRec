@@ -13,6 +13,7 @@ from .. import config
 from ..use_model import model_registry
 from ..use_model.emotion import analyze_frame
 from ..use_model.models import get_models
+from ..use_eval import eval_store, evaluation
 from ..use_train import train_store, training
 from .image_utils import decode_base64_image
 
@@ -85,6 +86,55 @@ async def train_run_detail(run_id: str):
     if run is None:
         return JSONResponse(status_code=404, content={"error": "训练记录不存在"})
     return run
+
+
+# ── 模型评测（测试/验证集）API ────────────────────────────────────
+@app.get("/api/eval/targets")
+async def eval_targets():
+    """可评测的模型与数据集（含 val/test 计数）。"""
+    return evaluation.list_targets()
+
+
+@app.get("/api/eval/status")
+async def eval_status():
+    return evaluation.get_status()
+
+
+@app.post("/api/eval/start")
+async def eval_start(params: dict = Body(default=None)):
+    try:
+        return evaluation.start_eval(params or {})
+    except RuntimeError as e:        # 已有任务在跑
+        return JSONResponse(status_code=409, content={"ok": False, "error": str(e)})
+    except ValueError as e:          # 参数非法
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+@app.post("/api/eval/stop")
+async def eval_stop():
+    return evaluation.stop_eval()
+
+
+@app.get("/api/eval/runs")
+async def eval_runs():
+    """全部历史评测记录（供下拉切换）。"""
+    return eval_store.list_evals()
+
+
+@app.get("/api/eval/runs/{eval_id}")
+async def eval_run_detail(eval_id: str):
+    """某次评测的完整结果（含混淆矩阵与逐类指标）。"""
+    run = eval_store.get_eval(eval_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"error": "评测记录不存在"})
+    return run
+
+
+@app.delete("/api/eval/runs/{eval_id}")
+async def eval_run_delete(eval_id: str):
+    if eval_store.delete_eval(eval_id):
+        return {"ok": True}
+    return JSONResponse(status_code=404, content={"ok": False, "error": "评测记录不存在"})
 
 
 # ── 推理模型注册表（列出 / 切换 / 删除）─────────────────────────────

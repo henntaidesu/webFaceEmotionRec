@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import EmotionDetector from './components/EmotionDetector.vue'
 import TrainingPanel from './components/TrainingPanel.vue'
+import EvaluationPanel from './components/EvaluationPanel.vue'
 import ComfyUIPanel from './components/ComfyUIPanel.vue'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
@@ -11,6 +12,8 @@ const routes = [
   { path: '/jp',          component: EmotionDetector, props: { locale: ja } },
   { path: '/cn/train',    component: TrainingPanel,    props: { locale: zh } },
   { path: '/jp/train',    component: TrainingPanel,    props: { locale: ja } },
+  { path: '/cn/eval',     component: EvaluationPanel,  props: { locale: zh } },
+  { path: '/jp/eval',     component: EvaluationPanel,  props: { locale: ja } },
   { path: '/cn/comfyui',  component: ComfyUIPanel,     props: { locale: zh } },
   { path: '/jp/comfyui',  component: ComfyUIPanel,     props: { locale: ja } },
 ]

@@ -50,6 +50,9 @@ CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 # 训练记录与模型按「每次训练一个文件夹」存放于此（含 metrics.csv / meta.json / 滚动权重）
 MODEL_DIR = Path(os.getenv("MODEL_DIR", str(ROOT / "Model")))
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+# 模型评测结果按「每次评测一个文件夹」存放于此（含 result.json：混淆矩阵 + 逐类指标）
+EVAL_DIR = Path(os.getenv("EVAL_DIR", str(ROOT / "Eval")))
+EVAL_DIR.mkdir(parents=True, exist_ok=True)
 # 每个训练运行保留的最近权重文件数
 KEEP_CHECKPOINTS = int(os.getenv("KEEP_CHECKPOINTS", "10"))
 

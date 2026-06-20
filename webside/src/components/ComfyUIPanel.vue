@@ -185,6 +185,78 @@
             </div>
           </div>
         </div>
+
+        <!-- ── 批量生成数据集 ── -->
+        <div class="batch-box">
+          <div class="batch-title">🗂 {{ locale.comfyBatchTitle }}</div>
+          <p class="batch-desc">{{ locale.comfyBatchDesc }}</p>
+
+          <div class="field">
+            <label class="field-label">{{ locale.comfyBatchEmotions }}</label>
+            <div class="preset-btns">
+              <button
+                v-for="p in vrPresets"
+                :key="p.key"
+                class="preset-btn"
+                :class="{ active: batch.emotions.includes(p.key) }"
+                :disabled="batch.running"
+                @click="toggleBatchEmotion(p.key)"
+              >{{ p.label }}</button>
+            </div>
+          </div>
+
+          <div class="two-col">
+            <div class="field">
+              <label class="field-label">{{ locale.comfyBatchPerEmotion }}</label>
+              <input
+                type="number"
+                v-model.number="batch.perEmotion"
+                class="ctrl-num"
+                min="1"
+                max="5000"
+                :disabled="batch.running"
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">{{ locale.comfyBatchFolder }}</label>
+              <input
+                type="text"
+                v-model.trim="batch.folder"
+                class="ctrl-select"
+                :disabled="batch.running"
+              />
+            </div>
+          </div>
+
+          <p class="batch-hint">
+            {{ locale.comfyBatchSaveHint }}
+            <code>output/{{ batch.folder || 'vr_dataset' }}/&lt;emotion&gt;/</code>
+          </p>
+
+          <button
+            v-if="!batch.running"
+            class="btn-generate"
+            :disabled="!form.checkpoint || batch.emotions.length === 0 || batch.perEmotion < 1"
+            @click="startBatch"
+          >
+            {{ locale.comfyBatchStart }} ({{ batch.emotions.length * batch.perEmotion }})
+          </button>
+          <button v-else class="btn-stop" @click="stopBatch">
+            ■ {{ locale.comfyBatchStop }}
+          </button>
+
+          <div v-if="batch.running || batch.done > 0" class="batch-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{ width: batchPct + '%' }"></div>
+            </div>
+            <div class="batch-stat">
+              <span>{{ batch.done }} / {{ batch.total }}</span>
+              <span v-if="batch.currentEmotion" class="cur">· {{ emoLabel(batch.currentEmotion) }}</span>
+              <span class="ok">✓ {{ batch.ok }}</span>
+              <span v-if="batch.fail > 0" class="fail">✗ {{ batch.fail }}</span>
+            </div>
+          </div>
+        </div>
       </template>
     </div>
 
@@ -518,6 +590,153 @@ function closeWS() {
   }
 }
 
+// ── 批量数据集生成 ────────────────────────────────────
+const batch = reactive({
+  emotions:   VR_EMOTIONS.map((e) => e.key), // 默认全选 7 类
+  perEmotion: 50,
+  folder:     'vr_dataset',
+  running:    false,
+  done:       0,
+  total:      0,
+  ok:         0,
+  fail:       0,
+  currentEmotion: '',
+})
+
+const batchPct = computed(() =>
+  batch.total > 0 ? Math.round((batch.done / batch.total) * 100) : 0,
+)
+
+const emoLabel = (key) => vrPresets.value.find((p) => p.key === key)?.label ?? key
+
+function toggleBatchEmotion(key) {
+  if (batch.running) return
+  const i = batch.emotions.indexOf(key)
+  if (i >= 0) batch.emotions.splice(i, 1)
+  else batch.emotions.push(key)
+}
+
+let batchStop = false
+let batchWs   = null
+
+async function startBatch() {
+  if (batch.running) return
+  if (!form.checkpoint) {
+    statusMsg.value      = props.locale.comfyBatchNoCheckpoint
+    statusMsgClass.value = 'msg-error'
+    return
+  }
+  if (batch.emotions.length === 0 || batch.perEmotion < 1) return
+
+  batchStop      = false
+  batch.running  = true
+  batch.done     = 0
+  batch.ok       = 0
+  batch.fail     = 0
+  batch.total    = batch.emotions.length * batch.perEmotion
+  batch.currentEmotion = ''
+  statusMsg.value = ''
+  progress.current = 0
+  progress.max     = 0
+
+  const clientId = makeClientId()
+  batchWs = openProgressWS(clientId)
+  const folder = batch.folder || 'vr_dataset'
+
+  try {
+    for (const emo of batch.emotions) {
+      if (batchStop) break
+      batch.currentEmotion = emo
+      const prefix = `${folder}/${emo}/${emo}`
+      for (let i = 0; i < batch.perEmotion; i++) {
+        if (batchStop) break
+        try {
+          const { prompt } = await randomVrPrompt(emo)
+          const workflow = buildTxt2ImgWorkflow({
+            positive:        prompt,
+            negative:        VR_NEGATIVE_PROMPT,
+            checkpoint:      form.checkpoint,
+            steps:           form.steps,
+            cfg:             form.cfg,
+            width:           form.width,
+            height:          form.height,
+            sampler:         form.sampler,
+            scheduler:       form.scheduler,
+            seed:            -1,
+            filename_prefix: prefix,
+          })
+          const { prompt_id } = await queuePrompt(clientId, workflow)
+          await waitForPrompt(batchWs, prompt_id)
+          batch.ok++
+        } catch {
+          batch.fail++
+        } finally {
+          batch.done++
+        }
+      }
+    }
+    statusMsg.value      = batchStop ? props.locale.comfyBatchStopped : props.locale.comfyBatchDone
+    statusMsgClass.value = batchStop ? 'msg-error' : 'msg-ok'
+  } finally {
+    batch.running        = false
+    batch.currentEmotion = ''
+    if (batchWs) { batchWs.close(); batchWs = null }
+  }
+}
+
+function stopBatch() {
+  batchStop = true
+}
+
+/** 等待单个 prompt 执行完成；WS 漏消息时靠 history 轮询兜底 */
+function waitForPrompt(socket, promptId) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let poll    = null
+
+    function cleanup() {
+      socket.removeEventListener('message', onMsg)
+      if (poll) clearInterval(poll)
+    }
+    function done() {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    function onMsg(e) {
+      let msg
+      try { msg = JSON.parse(e.data) } catch { return }
+      const { type, data } = msg
+      if (type === 'progress' && data?.prompt_id === promptId) {
+        progress.current = data.value
+        progress.max     = data.max
+      }
+      if (
+        (type === 'execution_success' && data?.prompt_id === promptId) ||
+        (type === 'executing' && data?.node === null && data?.prompt_id === promptId)
+      ) {
+        done()
+      }
+      if (type === 'execution_error' && data?.prompt_id === promptId) {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error(data?.exception_message ?? 'execution error'))
+      }
+    }
+
+    socket.addEventListener('message', onMsg)
+    // 兜底：每 3s 查一次 history，命中输出即判定完成
+    poll = setInterval(async () => {
+      try {
+        const h = await getHistory(promptId)
+        if (h[promptId]?.outputs) done()
+      } catch { /* 继续轮询 */ }
+    }, 3000)
+  })
+}
+
 // ── 生命周期 ─────────────────────────────────────────
 let connTimer = null
 
@@ -530,6 +749,8 @@ onUnmounted(() => {
   clearInterval(connTimer)
   clearInterval(pollTimer)
   closeWS()
+  batchStop = true
+  if (batchWs) { batchWs.close(); batchWs = null }
 })
 </script>
 
@@ -959,6 +1180,71 @@ onUnmounted(() => {
 }
 
 .result-item:hover .dl-btn { opacity: 1; }
+
+/* ── 批量数据集生成 ── */
+.batch-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-2);
+}
+
+.batch-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.batch-desc {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.batch-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.batch-hint code {
+  font-family: ui-monospace, monospace;
+  color: var(--color-accent);
+}
+
+.btn-stop {
+  width: 100%;
+  padding: 11px 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 107, 107, 0.16);
+  color: #ff6b6b;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-stop:hover { opacity: 0.85; }
+
+.batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.batch-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+.batch-stat .cur  { color: var(--color-primary); }
+.batch-stat .ok   { color: #2ecc71; margin-left: auto; }
+.batch-stat .fail { color: #ff6b6b; }
 
 /* ── 灯箱 ── */
 .lightbox {

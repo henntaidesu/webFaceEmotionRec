@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Real-time facial emotion recognition web app. A Vue 3 SPA streams webcam frames over a WebSocket to a FastAPI backend, which runs MTCNN face detection + HSEmotion (EfficientNet-B2) emotion classification on the GPU and returns per-face emotion probabilities. A second panel embeds a ComfyUI client (image generation), reached through a Vite dev proxy.
+Real-time facial emotion recognition web app. A Vue 3 SPA streams webcam frames over a WebSocket to a FastAPI backend, which runs MTCNN face detection + emotion classification on the GPU and returns per-face emotion probabilities. The classifier is **pluggable**: a built-in HSEmotion (EfficientNet-B2) model ships by default, and the app can also **train custom image-FER models from the browser** and hot-swap them for inference. Two more SPA panels cover that training workflow and an embedded ComfyUI client.
 
 > **Note:** `README.md` is out of date — it describes a DeepFace-based pipeline on ports 8000/5173. The real implementation uses MTCNN + HSEmotion on **port 9501 (backend)** and **port 9500 (frontend)**. Trust the code over the README.
 
@@ -19,7 +19,7 @@ The app expects a conda env named `webFaceEmotionRec` (not the venv shown in REA
 
 # Backend only
 cd backend
-python main.py       # serves on 0.0.0.0:9501
+python main.py       # serves on 0.0.0.0:9501 (thin entry point → src/use_web/app.py)
 
 # Frontend only
 cd webside
@@ -36,36 +36,66 @@ PyTorch (CUDA) must be installed **separately** before `pip install -r backend/r
 ```
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
-HSEmotion model weights download from the network on first run. GPU is auto-detected; falls back to CPU with a warning.
+HSEmotion model weights download from the network on first run. By default CUDA is **required** (`select_device` raises if no GPU); set `REQUIRE_CUDA=0` to fall back to CPU.
+
+### Training datasets
+Image data is **not** committed (see `.gitignore`) — only the prep scripts in [DataSet/](DataSet/). Regenerate locally before training:
+```
+python DataSet/prepare_fer2013.py      # then apply_ferplus.py / prepare_rafdb.py / prepare_affectnet.py
+```
+Each script writes `DataSet/<name>/{train,val[,test]}/<emotion>/*` as torchvision `ImageFolder` trees. The 7 class dirs are alphabetical: `angry disgust fear happy neutral sad surprise`. See [DataSet/README.md](DataSet/README.md) for sources/licensing (RAF-DB/AffectNet mirrors are a license gray area) and VR-occlusion datasets.
 
 ## Architecture
 
+### Backend package layout
+`backend/main.py` is a thin entry point; all logic lives in `backend/src/`, split by responsibility:
+- [src/config.py](backend/src/config.py) — central config, env-overridable (ports, CUDA, model name, thresholds, train defaults, paths).
+- [src/use_web/](backend/src/use_web/) — frontend-facing layer: `app.py` (FastAPI routes + WebSocket), `image_utils.py` (base64 decode).
+- [src/use_model/](backend/src/use_model/) — **inference**: `torch_patch.py`, `device.py`, `labels.py`, `models.py` (MTCNN + HSEmotion singleton), `emotion.py` (`analyze_frame`), `model_registry.py` (active-model switching).
+- [src/use_train/](backend/src/use_train/) — **training**: `training.py` (job manager), `train_store.py` (disk persistence), `cnn_model.py` (custom VR CNN + occlusion augmentation).
+
 ### Frontend → Backend communication
-- The frontend **never hardcodes the backend host**. It opens `new WebSocket(...location.host.../ws/emotion)` and relies on the Vite proxy ([webside/vite.config.js](webside/vite.config.js)) to forward `/ws` and `/health` to `localhost:9501`. In production the SPA and API must be served behind a reverse proxy that preserves these paths.
+- The frontend **never hardcodes the backend host**. It opens `new WebSocket(...location.host.../ws/emotion)` and relies on the Vite proxy ([webside/vite.config.js](webside/vite.config.js)) to forward `/ws`, `/health`, and `/api` to `localhost:9501` (and `/comfyui` to the ComfyUI server). In production the SPA and API must be served behind a reverse proxy that preserves these paths.
 - Frames: `EmotionDetector.vue` captures the `<video>` to a canvas at `TARGET_FPS = 5`, encodes JPEG via `canvas.toDataURL('image/jpeg', 0.75)`, and sends JSON `{ frame: <dataURL>, detector_backend: <string> }`.
-- Backend ([backend/main.py](backend/main.py)) decodes base64 → OpenCV BGR, runs `analyze_frame` in a `ThreadPoolExecutor` (off the asyncio loop), and replies with `{ success, faces: [{ region, emotions, dominant, dominant_en }] }`. `emotions` keys are **Chinese labels**; `dominant_en` carries the English key the frontend uses for color/emoji lookup.
+- Backend ([src/use_web/app.py](backend/src/use_web/app.py)) decodes base64 → OpenCV BGR, runs `analyze_frame` in a `ThreadPoolExecutor` (off the asyncio loop), and replies with `{ success, faces: [{ region, emotions, dominant, dominant_en }] }`. `emotions` keys are **Chinese labels**; `dominant_en` carries the English key the frontend uses for color/emoji lookup.
 - `detector_backend` is accepted and validated against `ALLOWED_DETECTOR_BACKENDS` but currently **unused** — detection is always MTCNN regardless of the dropdown value.
 
 ### Emotion label pipeline (three label spaces)
-Labels pass through three vocabularies, and the mapping tables in [backend/main.py](backend/main.py) are the source of truth:
-1. **HSEmotion output** (`anger`, `happiness`, `sadness`, ...) →
-2. **English / DeepFace-compatible keys** (`angry`, `happy`, `sad`, ...) via `HSEMOTION_TO_EN` →
+Labels pass through three vocabularies; the mapping tables in [src/use_model/labels.py](backend/src/use_model/labels.py) are the source of truth:
+1. **Model output** (HSEmotion: `anger`, `happiness`, ...; trained models emit English keys directly) →
+2. **English / DeepFace-compatible keys** (`angry`, `happy`, `sad`, ...) via `HSEMOTION_TO_EN` (identity for already-English keys) →
 3. **Chinese display** (`愤怒`, `开心`, ...) via `EMOTION_ZH`.
 
-The model is `enet_b2_7` — **7 classes, no "contempt"** — deliberately matched to DeepFace's label set. If you change the model, update both mapping dicts.
+The built-in model is `enet_b2_7` — **7 classes, no "contempt"** — deliberately matched to DeepFace's label set. Trained models use the same 7 classes (`config.TRAIN_CLASSES`, alphabetical). If you change the class set, update both mapping dicts and `TRAIN_CLASSES`.
+
+### Pluggable inference models (model registry)
+[src/use_model/model_registry.py](backend/src/use_model/model_registry.py) lets inference swap between the built-in HSEmotion and any browser-trained model at runtime (`/api/models`, `/api/models/active`, `DELETE /api/models/{id}`). `analyze_frame` calls `get_active_recognizer()` each frame. `TrainedEmotionRecognizer` is **interface-compatible** with `HSEmotionRecognizer` (`idx_to_class` attr + `predict_emotions(rgb, logits=False) -> (label, scores)`) so `emotion.py` stays model-agnostic. Recognizers are cached; after a process restart the active one is lazily reloaded.
+
+### Training subsystem
+[src/use_train/training.py](backend/src/use_train/training.py) runs a **single** training job in a background daemon thread; the frontend polls `/api/train/status` for a live snapshot (per-epoch metrics, running loss, log tail). Endpoints: `/api/train/datasets`, `/start`, `/stop`, `/status`, `/runs`, `/runs/{id}`. Key facts:
+- **Two backbones** (`config.TRAIN_BACKBONE_CHOICES`): `efficientnet_b2` (timm, pretrained — warmup with frozen backbone for `freeze_epochs`) and `vr_cnn` (custom `VRFaceCNN` in `cnn_model.py`, trained from scratch, never frozen).
+- **VR occlusion augmentation** (`VRMask`): masks the eye band to simulate a VR headset occluding the upper face. Training randomizes the mask; **validation uses a fixed mask**, so reported `val_acc`/`macro_f1` reflect accuracy *while wearing VR*.
+- Heavy deps (torch/torchvision/timm) are imported **lazily inside training functions**, keeping backend startup fast.
+- `ImageFolder` class order is asserted to equal `config.TRAIN_CLASSES`; multiple selected datasets are merged via `ConcatDataset`. Class-weighted `CrossEntropyLoss` + AdamW + AMP (`GradScaler`).
+
+### Two separate model stores (don't confuse them)
+- `Model/<run_id>/` (`config.MODEL_DIR`) — **training history**: `meta.json`, `metrics.csv` (one row/epoch, survives restart), and rolling `epoch_NN.pt` weights (last `KEEP_CHECKPOINTS`). Read by the training panel's run dropdown via `train_store.py`.
+- `backend/checkpoints/` (`config.CHECKPOINT_DIR`) — **inference registry**: only the *best* `<id>.pt` plus a `<id>.json` sidecar, written when a new best macro-F1 is hit. This is what `model_registry` lists/loads.
 
 ### PyTorch 2.6 compatibility shim
-`main.py` monkeypatches `torch.load` to force `weights_only=False` **before** importing `facenet_pytorch`/`hsemotion`. Those libs ship weights incompatible with PyTorch 2.6's new default. Do not reorder these imports or remove the patch.
+[src/use_model/torch_patch.py](backend/src/use_model/torch_patch.py) monkeypatches `torch.load` to force `weights_only=False`. `models.py` calls `patch_torch_load()` **before** importing `facenet_pytorch`/`hsemotion`, whose shipped weights are incompatible with PyTorch 2.6's new default. Do not reorder these imports or remove the patch.
 
-### Thresholds (tunable, in `analyze_frame`)
-- MTCNN detection: per-stage `thresholds=[0.6, 0.7, 0.7]`, `min_face_size=20`.
-- Per-face confidence gate: faces with `prob < 0.75` are dropped before emotion classification.
+### Thresholds (tunable, in [src/config.py](backend/src/config.py))
+- MTCNN detection: per-stage `MTCNN_THRESHOLDS=[0.6, 0.7, 0.7]`, `MIN_FACE_SIZE=20`.
+- Per-face confidence gate: faces with `prob < FACE_CONFIDENCE_THRESHOLD` (0.75) are dropped before classification.
 
 ### Localization & routing
-Vue Router serves the **same** `EmotionDetector` component at `/cn` (zh) and `/jp` (ja), passing a `locale` object as a prop ([webside/src/router.js](webside/src/router.js)). All UI strings live in [webside/src/locales/zh.js](webside/src/locales/zh.js) and [ja.js](webside/src/locales/ja.js) — including the `detectorOptions` dropdown list. Add a language by adding a locale file + route. The root `/` redirects to `/cn`.
+Vue Router ([webside/src/router.js](webside/src/router.js)) serves three pages — `EmotionDetector`, `TrainingPanel`, `ComfyUIPanel` — each at both `/cn/*` (zh) and `/jp/*` (ja), passing a `locale` object as a prop. The sidebar nav and language switch live in [webside/src/App.vue](webside/src/App.vue). All UI strings live in [webside/src/locales/zh.js](webside/src/locales/zh.js) and [ja.js](webside/src/locales/ja.js). Add a language by adding a locale file + routes. The root `/` redirects to `/cn`.
 
 ### ComfyUI panel
-[webside/src/components/ComfyUIPanel.vue](webside/src/components/ComfyUIPanel.vue) + [api/comfyuiApi.js](webside/src/api/comfyuiApi.js) talk to an external ComfyUI server. In dev, requests go to `/comfyui` and Vite proxies (with path rewrite) to `VITE_COMFYUI_PROXY_TARGET`. Configure via env (see [webside/.env.example](webside/.env.example)): `VITE_COMFYUI_HOST`, `VITE_COMFYUI_BASE`, `VITE_COMFYUI_PROXY_TARGET`. This panel is independent of the emotion pipeline.
+[webside/src/components/ComfyUIPanel.vue](webside/src/components/ComfyUIPanel.vue) + [api/comfyuiApi.js](webside/src/api/comfyuiApi.js) talk to an external ComfyUI server. In dev, requests go to `/comfyui` and Vite proxies (with path rewrite) to `VITE_COMFYUI_PROXY_TARGET`. Configure via env (see [webside/.env.example](webside/.env.example)): `VITE_COMFYUI_HOST`, `VITE_COMFYUI_BASE`, `VITE_COMFYUI_PROXY_TARGET` — defaults now point at the **local** `127.0.0.1:8188` ComfyUI launched from the root `comfyui/` 绘世 launcher (started with `--listen`). This panel is independent of the emotion pipeline. (Note: `comfyui/` at the repo root is a bundled ComfyUI runtime, not project source — ignore it when searching.)
+
+The panel also has a **batch dataset generator**: pick emotion classes + count-per-class, and it loops `buildTxt2ImgWorkflow` (one random prompt per image drawn from `public/vr_emotion_prompts.csv` via `vrPrompts.js`, 1000/emotion) with `filename_prefix: <folder>/<emotion>/<emotion>`, so ComfyUI writes the images straight into per-emotion subfolders of its `output/` dir — ready to feed the FER trainer's `ImageFolder` tree. Generation is sequential (queue → wait via the same WS progress events, history-poll fallback) with stop support.
 "" 
 # CLAUDE.md
 
