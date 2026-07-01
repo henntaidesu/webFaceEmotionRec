@@ -1,92 +1,82 @@
-# 人脸情感识别 Web 应用
+# 人脸情感识别 Web 应用（VR 遮挡场景）
 
-基于 Vue 3 + FastAPI + DeepFace 的实时人脸情感识别系统。
+面向 **VR 遮挡场景**的实时人脸情绪识别系统：Vue 3 单页应用把摄像头帧经 WebSocket 推给 FastAPI 后端，后端在 GPU 上做 **MTCNN 人脸检测 + 情绪分类**，返回每张脸的 7 类情绪概率。分类器**可插拔**——默认内置 HSEmotion（EfficientNet-B2），也支持**在浏览器里训练自定义模型**并热切换用于推理。
 
-## 项目结构
+> 研究背景与数据采集计划见 [docs/研究路线图.md](docs/研究路线图.md) 与 [docs/任务书_QuestPro_VR表情数据集采集.md](docs/任务书_QuestPro_VR表情数据集采集.md)。
 
-```
-webFaceEmotionRec/
-├── backend/
-│   ├── main.py           # FastAPI 后端服务
-│   └── requirements.txt  # Python 依赖
-├── webside/
-│   ├── src/
-│   │   ├── App.vue                         # 主布局
-│   │   ├── components/EmotionDetector.vue  # 核心识别组件
-│   │   ├── main.js
-│   │   └── style.css
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.js
-└── README.md
-```
+## 端口与环境
+
+- 后端：**9501**（`0.0.0.0:9501`）
+- 前端：**9500**（Vite，strictPort）
+- 建议使用 conda 环境 `webFaceEmotionRec`。
+- 默认要求 CUDA（`select_device` 无 GPU 会报错）；设 `REQUIRE_CUDA=0` 可退回 CPU。
 
 ## 快速启动
 
-### 1. 启动后端
-
 ```powershell
+# 整栈（前后端一起），仓库根目录：
+.\start_sys.bat      # Windows，开两个 cmd 窗口
+./start.sh           # bash/conda，Ctrl+C 同时停止
+
+# 仅后端
 cd backend
+python main.py       # 0.0.0.0:9501（薄入口 → src/use_web/app.py）
 
-# 创建虚拟环境（推荐）
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 安装依赖（首次约需几分钟，会下载 DeepFace 模型）
-pip install -r requirements.txt
-
-# 启动服务
-python main.py
-```
-
-后端运行在 `http://localhost:8000`，首次调用时 DeepFace 会自动下载模型文件（约 100MB）。
-
-### 2. 启动前端
-
-```powershell
+# 仅前端
 cd webside
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
-npm run dev
+npm run dev          # 0.0.0.0:9500
 ```
 
-前端运行在 `http://localhost:5173`，打开浏览器访问即可。
+### Python 依赖
+PyTorch(CUDA) 需**先单独**安装，再装 `backend/requirements.txt`：
+```
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+HSEmotion 权重首次运行时联网下载。
 
-### 3. 使用方法
+## 页面（Vue Router，`/cn/*` 中文、`/jp/*` 日文）
 
-1. 打开 `http://localhost:5173`
-2. 点击「开启摄像头」，浏览器会请求摄像头权限，点击允许
-3. 点击「开始识别」，系统自动连接后端并开始实时分析
-4. 将脸部对准摄像头，右侧面板实时显示情感概率
+- **情感识别** `/cn` — 摄像头实时识别。
+- **模型训练** `/cn/train` — 浏览器内训练自定义 FER 模型（含 VR 遮挡增强）。
+- **模型评测** `/cn/eval` — 混淆矩阵 + 逐类指标。
+- **图像生成** `/cn/comfyui`（二级菜单）：
+  - **生成表情** — ComfyUI 生成「戴 VR 的人做表情」的合成训练图。
+  - **VR 刺激图** `/cn/comfyui/stimulus` — 生成 360° 全景情绪刺激图，用于诱导受试者表情；内置场景库 + WebXR 沉浸查看器。
 
-## 可识别的情感
+## 可识别的情感（7 类，字母序对齐 `config.TRAIN_CLASSES`）
 
-| 情感 | 英文 | Emoji |
+| 中文 | 英文 | Emoji |
 |------|------|-------|
-| 开心 | happy | 😄 |
-| 悲伤 | sad | 😢 |
 | 愤怒 | angry | 😠 |
-| 惊讶 | surprise | 😲 |
-| 恐惧 | fear | 😨 |
 | 厌恶 | disgust | 🤢 |
+| 恐惧 | fear | 😨 |
+| 开心 | happy | 😄 |
 | 平静 | neutral | 😐 |
+| 悲伤 | sad | 😢 |
+| 惊讶 | surprise | 😲 |
 
 ## 技术栈
 
 | 层次 | 技术 |
 |------|------|
-| 前端框架 | Vue 3 + Vite |
-| 前后端通信 | WebSocket（Base64 JPEG 帧流） |
-| 后端框架 | FastAPI + uvicorn |
-| 情感识别模型 | DeepFace（opencv 检测器） |
-| 图像处理 | OpenCV + NumPy |
+| 前端 | Vue 3 + Vue Router + Vite；three.js（360 查看器，懒加载） |
+| 通信 | WebSocket（Base64 JPEG 帧流，`TARGET_FPS=5`） |
+| 后端 | FastAPI + uvicorn，推理跑在 ThreadPoolExecutor |
+| 检测 | MTCNN（facenet-pytorch） |
+| 分类 | HSEmotion `enet_b2_7`（默认）/ 自训练模型 |
+| 训练 | timm efficientnet_b2 或自定义 VRFaceCNN；AMP + AdamW |
+
+## 架构要点
+
+- 前端**不硬编码后端地址**，走 Vite 代理（`/ws`、`/health`、`/api` → 9501；`/comfyui` → 8188）。
+- 三套标签空间（模型输出 → 英文键 → 中文显示），映射表在 `backend/src/use_model/labels.py`。
+- 两个独立模型存储：`Model/<run_id>/`（训练历史）与 `backend/checkpoints/`（推理注册表）。
+- ComfyUI 面板对接**本地** `127.0.0.1:8188`（根目录 `comfyui/` 绘世启动器，`--listen`）。
+- 训练数据不入库（见 `.gitignore`），用 `DataSet/` 下脚本本地生成 `ImageFolder` 树。
 
 ## 注意事项
 
-- 首次运行后端时，DeepFace 会自动从网络下载模型文件，请确保网络畅通
-- 识别帧率默认限制为 5 FPS，可在 `EmotionDetector.vue` 中修改 `TARGET_FPS`
-- 光线充足、正面对摄像头时识别效果最佳
-- 如遇 WebSocket 连接失败，请确认后端已成功启动在 8000 端口
+- 帧率默认 5 FPS，可在 `EmotionDetector.vue` 改 `TARGET_FPS`。
+- WebSocket 连不上时确认后端已在 **9501** 启动。
+- ComfyUI 经代理提交任务若报 403，见 `webside/vite.config.js` 中 `/comfyui` 代理对 Origin 头的改写说明。

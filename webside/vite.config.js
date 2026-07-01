@@ -27,6 +27,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/comfyui/, ''),
           ws: true,
+          // ComfyUI 的 origin_only_middleware 会拒绝 Host≠Origin 的写请求（POST /prompt 返回 403）。
+          // changeOrigin 只改了 Host，这里把 Origin 也改成目标地址，两者一致即可通过校验。
+          configure: (proxy) => {
+            const setOrigin = (proxyReq) => proxyReq.setHeader('origin', comfyTarget)
+            proxy.on('proxyReq', setOrigin)
+            proxy.on('proxyReqWs', setOrigin)
+          },
         },
       },
     },

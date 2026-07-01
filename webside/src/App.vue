@@ -13,6 +13,28 @@
         >
           {{ item.label }}
         </RouterLink>
+
+        <!-- 图像生成（含二级菜单） -->
+        <div class="nav-group">
+          <button
+            class="nav-group-header"
+            :class="{ open: comfyOpen }"
+            @click="comfyOpen = !comfyOpen"
+          >
+            <span>{{ comfyGroup.label }}</span>
+            <span class="caret">{{ comfyOpen ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="comfyOpen" class="nav-children">
+            <RouterLink
+              v-for="c in comfyGroup.children"
+              :key="c.to"
+              :to="c.to"
+              class="nav-link nav-sublink"
+            >
+              {{ c.label }}
+            </RouterLink>
+          </div>
+        </div>
       </nav>
 
       <RouterLink :to="langSwitchPath" class="lang-switch">
@@ -28,7 +50,7 @@
 </template>
 
 <script setup>
-import { computed, watchEffect } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import { useRoute, RouterLink, RouterView } from 'vue-router'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
@@ -47,8 +69,18 @@ const navItems = computed(() => [
   { to: prefix.value, label: currentLocale.value.nav.detect },
   { to: `${prefix.value}/train`, label: currentLocale.value.nav.train },
   { to: `${prefix.value}/eval`, label: currentLocale.value.nav.evaluate },
-  { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyui },
 ])
+
+// 图像生成一级项及其二级菜单
+const comfyGroup = computed(() => ({
+  label: currentLocale.value.nav.comfyui,
+  children: [
+    { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyExpression },
+    { to: `${prefix.value}/comfyui/stimulus`, label: currentLocale.value.nav.comfyStimulus },
+  ],
+}))
+
+const comfyOpen = ref(true)
 
 watchEffect(() => {
   document.title = currentLocale.value.pageTitle
@@ -103,6 +135,50 @@ watchEffect(() => {
 .nav-link.router-link-exact-active {
   color: var(--color-text);
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── 二级菜单 ── */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-group-header:hover {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.nav-group-header .caret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.nav-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-sublink {
+  padding-left: 24px;
+  font-size: 0.85rem;
 }
 
 /* ── 语言切换（侧边栏底部） ── */
