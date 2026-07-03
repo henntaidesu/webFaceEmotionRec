@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 from .. import config
 from ..use_model import model_registry
 from ..use_model.emotion import analyze_frame
+from ..use_model.fea_emotion import classify_fea
 from ..use_model.models import get_models
 from ..use_eval import eval_store, evaluation
 from ..use_train import train_store, training
@@ -164,6 +166,38 @@ async def models_delete(model_id: str):
         return JSONResponse(status_code=404, content={"ok": False, "error": "模型不存在"})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+# ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────
+# 机内摄像头不开放原始图像，头显侧（Unity/Meta XR Movement SDK）把 63 维 FEA
+# 推到这里；后端分类后，前端「微情感生成」页轮询 /api/fea/latest 取用。
+_latest_fea: dict = {"data": None}
+
+
+@app.post("/api/fea")
+async def fea_ingest(body: dict = Body(default=None)):
+    """接收 Quest Pro 的一帧 FEA：{"blendshapes":[63], "timestamp_ms"?:int}。"""
+    bs = (body or {}).get("blendshapes")
+    try:
+        result = classify_fea(bs)
+    except (ValueError, TypeError) as e:
+        return JSONResponse(status_code=400, content={"success": False, "error": str(e)})
+    result["success"] = True
+    result["timestamp_ms"] = int((body or {}).get("timestamp_ms") or time.time() * 1000)
+    _latest_fea["data"] = result
+    return result
+
+
+@app.get("/api/fea/latest")
+async def fea_latest():
+    """前端取最近一帧 FEA 情绪；无数据时 success=False。"""
+    data = _latest_fea["data"]
+    if not data:
+        return {"success": False, "faces": []}
+    # 结构对齐图像识别路径：faces:[{dominant_en,dominant,emotions}]
+    return {"success": True, "timestamp_ms": data["timestamp_ms"], "faces": [
+        {"dominant_en": data["dominant_en"], "dominant": data["dominant"], "emotions": data["emotions"]}
+    ]}
 
 
 @app.websocket("/ws/emotion")

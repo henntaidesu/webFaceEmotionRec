@@ -305,8 +305,8 @@ function sendFrame() {
   canvas.width  = videoEl.value.videoWidth
   canvas.height = videoEl.value.videoHeight
   const ctx = canvas.getContext('2d')
-  ctx.translate(canvas.width, 0)
-  ctx.scale(-1, 1)
+  // 发送未镜像的原始帧：显示层 <video> 已由 CSS scaleX(-1) 做 selfie 镜像，
+  // 叠加层再用 (w - x - fw) 把后端框坐标映射回显示坐标。若此处也镜像会双重翻转导致框左右错位。
   ctx.drawImage(videoEl.value, 0, 0)
 
   ws.send(JSON.stringify({

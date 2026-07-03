@@ -77,6 +77,7 @@ const comfyGroup = computed(() => ({
   children: [
     { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyExpression },
     { to: `${prefix.value}/comfyui/stimulus`, label: currentLocale.value.nav.comfyStimulus },
+    { to: `${prefix.value}/comfyui/affective`, label: currentLocale.value.nav.comfyAffective },
   ],
 }))
 

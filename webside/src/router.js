@@ -4,6 +4,7 @@ import TrainingPanel from './components/TrainingPanel.vue'
 import EvaluationPanel from './components/EvaluationPanel.vue'
 import ComfyUIPanel from './components/ComfyUIPanel.vue'
 import VRStimulusPanel from './components/VRStimulusPanel.vue'
+import AffectiveGenPanel from './components/AffectiveGenPanel.vue'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
 
@@ -19,6 +20,8 @@ const routes = [
   { path: '/jp/comfyui',  component: ComfyUIPanel,     props: { locale: ja } },
   { path: '/cn/comfyui/stimulus', component: VRStimulusPanel, props: { locale: zh } },
   { path: '/jp/comfyui/stimulus', component: VRStimulusPanel, props: { locale: ja } },
+  { path: '/cn/comfyui/affective', component: AffectiveGenPanel, props: { locale: zh } },
+  { path: '/jp/comfyui/affective', component: AffectiveGenPanel, props: { locale: ja } },
 ]
 
 export default createRouter({

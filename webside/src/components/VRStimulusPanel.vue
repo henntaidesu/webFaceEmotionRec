@@ -694,7 +694,7 @@ onUnmounted(() => {
   transition: all 0.2s;
   display: flex; align-items: center; justify-content: center;
 }
-.icon-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.icon-btn:hover { border-color: #2563eb; color: #2563eb; }
 
 .comfy-body {
   flex: 1; overflow-y: auto;
@@ -717,7 +717,7 @@ onUnmounted(() => {
 .offline-hint  { font-size: 0.8rem; line-height: 1.6; max-width: 300px; }
 .btn-retry {
   margin-top: 6px; padding: 8px 22px; border-radius: 20px; border: none;
-  background: var(--color-primary); color: #fff;
+  background: #2563eb; color: #fff;
   font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
 }
 .btn-retry:hover { opacity: 0.9; }
@@ -753,21 +753,21 @@ onUnmounted(() => {
   transition: all 0.15s;
 }
 .preset-btn:hover, .preset-btn.active {
-  border-color: var(--color-primary); color: var(--color-primary);
-  background: rgba(108, 99, 255, 0.1);
+  border-color: #2563eb; color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
 }
 
 .use-emotion-btn {
   padding: 3px 9px; border-radius: 6px;
-  border: 1px solid var(--color-accent);
-  background: rgba(0, 212, 255, 0.08); color: var(--color-accent);
+  border: 1px solid #2563eb;
+  background: rgba(37, 99, 235, 0.08); color: #2563eb;
   font-size: 0.7rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
 }
-.use-emotion-btn:hover { background: rgba(0, 212, 255, 0.18); }
+.use-emotion-btn:hover { background: rgba(37, 99, 235, 0.18); }
 
 .btn-generate {
   width: 100%; padding: 11px 0; border: none; border-radius: 10px;
-  background: linear-gradient(135deg, var(--color-primary), #a855f7);
+  background: #2563eb;
   color: #fff; font-size: 0.9rem; font-weight: 700; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s; letter-spacing: 0.04em; margin-top: 4px;
 }
@@ -778,7 +778,7 @@ onUnmounted(() => {
 .progress-bar { height: 5px; border-radius: 3px; background: var(--color-border); overflow: hidden; }
 .progress-fill {
   height: 100%; border-radius: 3px;
-  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+  background: #2563eb;
   transition: width 0.3s ease;
 }
 .progress-node { font-size: 0.7rem; color: var(--color-text-muted); }

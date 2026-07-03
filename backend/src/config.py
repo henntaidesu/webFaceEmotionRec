@@ -63,8 +63,11 @@ TRAIN_BACKBONE = os.getenv("TRAIN_BACKBONE", "efficientnet_b2")
 TRAIN_BACKBONE_CHOICES = ["efficientnet_b2", "vr_cnn"]
 # 7 类，顺序与各数据集 ImageFolder 字母序一致
 TRAIN_CLASSES = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
-# 可训练的数据集白名单 → 相对 DATASET_DIR 的目录名
-TRAIN_DATASETS = ["fer2013", "fer2013_plus", "rafdb", "affectnet"]
+# 可训练/可评测的数据集白名单 → 相对 DATASET_DIR 的目录名
+# quest_pro：自采「真实 VR 遮挡」下半脸数据（Meta Quest Pro），由
+# DataSet/prepare_quest_pro.py 导出为 ImageFolder 到 DATASET_DIR/quest_pro；
+# 未采集时目录不存在，面板自动标记为不可用（占位）。
+TRAIN_DATASETS = ["fer2013", "fer2013_plus", "rafdb", "affectnet", "quest_pro"]
 
 TRAIN_DEFAULTS = {
     "backbone": TRAIN_BACKBONE,

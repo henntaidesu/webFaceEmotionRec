@@ -1,5 +1,5 @@
 /**
- * VR 情绪刺激场景库（/vr_stimulus_prompts.csv，由 scripts/generate_vr_stimulus_prompts.mjs 生成）。
+ * VR 情绪刺激场景库（/vr_stimulus_prompts.csv，由 scripts/generate_vr_stimulus_prompts.py 生成）。
  * 每条是一个能诱导某种情绪的 360° 全景场景。首次抽取时加载并按情感分组缓存。
  */
 let scenesByEmotion = null

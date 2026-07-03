@@ -1,5 +1,5 @@
 /**
- * VR 情感提示词库（/vr_emotion_prompts.csv，由 scripts/generate_vr_prompts.mjs 生成）。
+ * VR 情感提示词库（/vr_emotion_prompts.csv，由 scripts/generate_vr_prompts.py 生成）。
  * 首次抽取时加载并按情感分组缓存。
  */
 let promptsByEmotion = null
