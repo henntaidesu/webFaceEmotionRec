@@ -67,14 +67,63 @@
           </div>
         </div>
 
-        <!-- 生成按钮 -->
-        <button class="btn-generate" :disabled="generating || !currentPrompt" @click="generate">
-          <span v-if="generating">
-            {{ locale.stimulus.generating }}
-            <span v-if="progress.max > 0"> · {{ progress.current }}/{{ progress.max }}</span>
-          </span>
-          <span v-else>{{ locale.stimulus.generate }}</span>
-        </button>
+        <!-- 分辨率（强制 2:1 等距全景）-->
+        <div class="field">
+          <label class="field-label">{{ locale.stimulus.resolution }}（2:1）</label>
+          <div class="preset-btns">
+            <button
+              v-for="p in RES_PRESETS"
+              :key="p"
+              class="preset-btn"
+              :class="{ active: gen.width === p }"
+              @click="gen.width = p"
+            >{{ p }}×{{ p / 2 }}</button>
+          </div>
+          <div class="row-group">
+            <input type="number" v-model.number="gen.width" class="ctrl-num" min="512" max="4096" step="64" @change="normalizeRes" />
+            <span class="seed-hint">× {{ genHeight }} {{ locale.stimulus.resHint }}</span>
+          </div>
+        </div>
+
+        <!-- 步数 / CFG -->
+        <div class="two-col">
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.steps }}</label>
+            <input type="number" v-model.number="gen.steps" class="ctrl-num" min="1" max="100" />
+          </div>
+          <div class="field">
+            <label class="field-label">CFG</label>
+            <input type="number" v-model.number="gen.cfg" class="ctrl-num" min="0" max="30" step="0.1" />
+          </div>
+        </div>
+
+        <!-- 采样器 / 调度器 -->
+        <div class="two-col">
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.sampler }}</label>
+            <select v-model="gen.sampler" class="ctrl-select">
+              <option v-for="s in SAMPLERS" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.scheduler }}</label>
+            <select v-model="gen.scheduler" class="ctrl-select">
+              <option v-for="s in SCHEDULERS" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 生成按钮 + 查看历史图片（同一行）-->
+        <div class="action-row">
+          <button class="btn-generate" :disabled="generating || !currentPrompt" @click="generate">
+            <span v-if="generating">
+              {{ locale.stimulus.generating }}
+              <span v-if="progress.max > 0"> · {{ progress.current }}/{{ progress.max }}</span>
+            </span>
+            <span v-else>{{ locale.stimulus.generate }}</span>
+          </button>
+          <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
+        </div>
 
         <!-- 进度条 -->
         <div v-if="generating" class="progress-wrap">
@@ -87,7 +136,7 @@
         <!-- 状态消息 -->
         <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
 
-        <!-- 结果图 -->
+        <!-- 本次生成 -->
         <div v-if="results.length > 0" class="result-area">
           <div class="result-header">
             <span class="result-label">{{ locale.stimulus.result }}（{{ results.length }}）</span>
@@ -96,7 +145,7 @@
                 {{ locale.stimulus.dwell }}
                 <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
               </label>
-              <button class="use-emotion-btn" @click="startSession">{{ locale.stimulus.sessionStart }}</button>
+              <button class="use-emotion-btn" @click="startSession()">{{ locale.stimulus.sessionStart }}</button>
               <button class="clear-btn" @click="results = []">✕</button>
             </div>
           </div>
@@ -141,7 +190,7 @@
 
           <p class="batch-hint">
             {{ locale.stimulus.batchSaveHint }}
-            <code>output/{{ batch.folder || 'vr_stimulus' }}/&lt;emotion&gt;/</code>
+            <code>image/{{ batch.folder ? batch.folder + '/' : '' }}&lt;emotion&gt;/</code>
           </p>
 
           <button
@@ -169,6 +218,60 @@
       </template>
     </div>
 
+    <!-- 历史图片弹窗（从磁盘 image/ 按需读取）-->
+    <div v-if="history.open" class="history-overlay" @click.self="closeHistory">
+      <div class="history-modal">
+        <div class="history-head">
+          <span class="history-title">{{ locale.stimulus.historyTitle }}（{{ history.images.length }}）</span>
+          <div class="history-actions">
+            <button class="icon-btn" :title="locale.comfyRetry" @click="loadHistory">↻</button>
+            <button class="icon-btn" title="✕" @click="closeHistory">✕</button>
+          </div>
+        </div>
+
+        <div class="history-filters">
+          <button
+            class="preset-btn"
+            :class="{ active: history.filter === '' }"
+            @click="setHistoryFilter('')"
+          >{{ locale.stimulus.historyAll }}</button>
+          <button
+            v-for="e in emotions"
+            :key="e.key"
+            class="preset-btn"
+            :class="{ active: history.filter === e.key }"
+            @click="setHistoryFilter(e.key)"
+          >{{ e.label }}</button>
+        </div>
+
+        <div class="history-body">
+          <p v-if="history.loading" class="history-empty">…</p>
+          <p v-else-if="history.images.length === 0" class="history-empty">{{ locale.stimulus.historyEmpty }}</p>
+          <div v-else class="result-grid">
+            <div v-for="img in history.images" :key="img.path" class="result-item">
+              <img :src="img.url" class="result-img" :title="locale.stimulus.fullscreen" @click="panoSrc = img.url" />
+              <span class="emo-tag">{{ emoLabel(img.emotion) }}</span>
+              <a :href="img.url" :download="img.filename" class="dl-btn" :title="locale.stimulus.download">↓</a>
+              <button class="del-btn" :title="locale.stimulus.historyDelete" @click="deleteHistoryImage(img.path)">🗑</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="history.images.length > 0" class="history-foot">
+          <button
+            v-if="history.filter"
+            class="clear-emo-btn"
+            @click="clearHistoryEmotion"
+          >🗑 {{ locale.stimulus.historyClear }}</button>
+          <label class="dwell-label">
+            {{ locale.stimulus.dwell }}
+            <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
+          </label>
+          <button class="use-emotion-btn" @click="playHistory">▶ {{ locale.stimulus.sessionStart }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 沉浸式 360° 全景查看器（可在 Quest 浏览器点击进入 VR） -->
     <PanoramaViewer
       v-if="panoSrc"
@@ -189,14 +292,17 @@ import {
   fetchObjectInfo,
   uiToApiFormat,
   applyPromptOverrides,
+  applyGenParams,
   queuePrompt,
   getHistory,
   imageUrl,
   makeClientId,
   openProgressWS,
+  SAMPLERS,
+  SCHEDULERS,
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
-import { randomVrStimulus } from '../api/vrStimulus.js'
+import { randomVrStimulus, saveStimulusImage } from '../api/vrStimulus.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
 const PanoramaViewer = defineAsyncComponent(() => import('./PanoramaViewer.vue'))
 
@@ -290,6 +396,24 @@ const currentPrompt   = ref('')
 const negative        = ref(DEFAULT_NEG)
 const seed            = ref(-1)
 
+// ── 生成参数（默认取自 qwen360_pano 工作流）──
+const gen = reactive({
+  width: 2048,        // 高度恒为 width/2（强制 2:1 等距全景）
+  steps: 20,
+  cfg: 3.5,
+  sampler: 'euler',
+  scheduler: 'simple',
+})
+// 2:1 分辨率预设（宽度）
+const RES_PRESETS = [1024, 1536, 2048, 2560, 3072]
+const genHeight = computed(() => Math.round(gen.width / 2))
+// 宽度归一化：钳制到 [512,4096] 并取 16 的倍数，保证 height=width/2 为 8 的倍数
+function normalizeRes() {
+  let w = Number(gen.width) || 2048
+  w = Math.min(4096, Math.max(512, Math.round(w / 16) * 16))
+  gen.width = w
+}
+
 const emotions = computed(() =>
   EMOTIONS.map((e) => ({ ...e, label: props.locale.emotionMap[e.zh] ?? e.zh })),
 )
@@ -327,15 +451,7 @@ const progressPct = computed(() =>
 let ws = null
 let pollTimer = null
 
-// 在 API 格式工作流中把 SaveImage 的 filename_prefix 改为指定路径（批量分目录保存用）
-function setSavePrefix(api, prefix) {
-  for (const node of Object.values(api)) {
-    if (node.class_type === 'SaveImage' && node.inputs) node.inputs.filename_prefix = prefix
-  }
-  return api
-}
-
-async function buildWorkflow({ positive, seedVal, filenamePrefix } = {}) {
+async function buildWorkflow({ positive, seedVal } = {}) {
   let raw
   try {
     raw = await fetchWorkflow(STIMULUS_WORKFLOW)
@@ -350,8 +466,21 @@ async function buildWorkflow({ positive, seedVal, filenamePrefix } = {}) {
     negative: negative.value,
     seed: seedVal ?? seed.value,
   })
-  if (filenamePrefix) setSavePrefix(api, filenamePrefix)
+  api = applyGenParams(api, {
+    width: gen.width,
+    height: genHeight.value,
+    steps: gen.steps,
+    cfg: gen.cfg,
+    sampler: gen.sampler,
+    scheduler: gen.scheduler,
+  })
   return api
+}
+
+// 仅展示「本次生成」（不再累积历史，历史见「查看历史图片」），并异步存盘到 image/<emotion>/
+function registerResults(urls, emo, label) {
+  results.value = urls.map((u) => ({ url: u, emotion: emo, label }))
+  for (const u of urls) saveStimulusImage(u, emo).catch(() => {})
 }
 
 async function generate() {
@@ -382,6 +511,7 @@ async function generate() {
 
 function waitForCompletion(socket, promptId, emo, label) {
   return new Promise((resolve, reject) => {
+    let settled = false
     socket.addEventListener('message', async (e) => {
       let msg
       try { msg = JSON.parse(e.data) } catch { return }
@@ -396,12 +526,14 @@ function waitForCompletion(socket, promptId, emo, label) {
         progress.node = data.node ?? ''
       }
       if (
-        (type === 'execution_success' && data?.prompt_id === promptId) ||
-        (type === 'executing' && data?.node === null && data?.prompt_id === promptId)
+        !settled &&
+        ((type === 'execution_success' && data?.prompt_id === promptId) ||
+         (type === 'executing' && data?.node === null && data?.prompt_id === promptId))
       ) {
+        settled = true
         try {
           const urls = await collectImages(promptId)
-          results.value = [...urls.map((u) => ({ url: u, emotion: emo, label })), ...results.value]
+          registerResults(urls, emo, label)
           statusMsg.value      = props.locale.stimulus.success
           statusMsgClass.value = 'msg-ok'
         } catch (err) {
@@ -446,7 +578,7 @@ function pollHistory(promptId, emo, label, resolve, reject) {
       const urls = await collectImages(promptId)
       if (urls.length > 0) {
         clearInterval(pollTimer)
-        results.value = [...urls.map((u) => ({ url: u, emotion: emo, label })), ...results.value]
+        registerResults(urls, emo, label)
         statusMsg.value      = props.locale.stimulus.success
         statusMsgClass.value = 'msg-ok'
         generating.value     = false
@@ -468,7 +600,7 @@ function closeWS() {
 const batch = reactive({
   emotions: EMOTIONS.map((e) => e.key),
   perEmotion: 20,
-  folder: 'vr_stimulus',
+  folder: '',
   running: false,
   done: 0,
   total: 0,
@@ -504,20 +636,21 @@ async function startBatch() {
 
   const clientId = makeClientId()
   batchWs = openProgressWS(clientId)
-  const folder = batch.folder || 'vr_stimulus'
+  const folder = batch.folder || ''
 
   try {
     for (const emo of batch.emotions) {
       if (batchStop) break
       batch.currentEmotion = emo
-      const prefix = `${folder}/${emo}/${emo}`
       for (let i = 0; i < batch.perEmotion; i++) {
         if (batchStop) break
         try {
           const { prompt } = await randomVrStimulus(emo)
-          const workflow = await buildWorkflow({ positive: prompt, seedVal: -1, filenamePrefix: prefix })
+          const workflow = await buildWorkflow({ positive: prompt, seedVal: -1 })
           const { prompt_id } = await queuePrompt(clientId, workflow)
           await waitForPrompt(batchWs, prompt_id)
+          const urls = await collectImages(prompt_id)
+          await Promise.all(urls.map((u) => saveStimulusImage(u, emo, folder)))
           batch.ok++
         } catch {
           batch.fail++
@@ -543,15 +676,16 @@ const session = reactive({ playing: false, dwell: 10, index: 0, list: [] })
 const sessionCaption = ref('')
 let sessionTimer = null
 
-function startSession() {
-  if (results.value.length === 0) {
+function startSession(list) {
+  const src = Array.isArray(list) && list.length ? list : results.value
+  if (src.length === 0) {
     statusMsg.value = props.locale.stimulus.sessionEmpty
     statusMsgClass.value = 'msg-error'
     return
   }
   // 按 7 类顺序分组排序，形成情绪块序列
   const order = EMOTIONS.map((e) => e.key)
-  session.list = [...results.value].sort(
+  session.list = [...src].sort(
     (a, b) => order.indexOf(a.emotion) - order.indexOf(b.emotion),
   )
   session.index = 0
@@ -563,7 +697,7 @@ function showSessionFrame() {
   const item = session.list[session.index]
   if (!item) { stopSession(); return }
   panoSrc.value = item.url
-  sessionCaption.value = `${item.label}  ·  ${session.index + 1}/${session.list.length}`
+  sessionCaption.value = `${emoLabel(item.emotion)}  ·  ${session.index + 1}/${session.list.length}`
   clearTimeout(sessionTimer)
   sessionTimer = setTimeout(() => {
     session.index++
@@ -584,6 +718,45 @@ function stopSession() {
 function closeViewer() {
   if (session.playing) stopSession()
   else panoSrc.value = null
+}
+
+// ── 历史图片（从磁盘 image/ 读取，按需查看，不常驻页面）──
+const history = reactive({ open: false, loading: false, filter: '', images: [] })
+
+async function loadHistory() {
+  history.loading = true
+  try {
+    const qs = history.filter ? `?emotion=${encodeURIComponent(history.filter)}` : ''
+    const res = await fetch(`/api/stimulus/images${qs}`)
+    const data = await res.json()
+    history.images = Array.isArray(data.images) ? data.images : []
+  } catch {
+    history.images = []
+  } finally {
+    history.loading = false
+  }
+}
+function openHistory() { history.open = true; loadHistory() }
+function closeHistory() { history.open = false }
+function setHistoryFilter(key) { history.filter = key; loadHistory() }
+function playHistory() {
+  if (history.images.length === 0) return
+  closeHistory()
+  startSession(history.images)
+}
+async function deleteHistoryImage(path) {
+  try {
+    await fetch(`/api/stimulus/images?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+    history.images = history.images.filter((i) => i.path !== path)
+  } catch { /* 忽略：下次刷新即一致 */ }
+}
+async function clearHistoryEmotion() {
+  if (!history.filter) return
+  if (!window.confirm(props.locale.stimulus.historyClearConfirm)) return
+  try {
+    await fetch(`/api/stimulus/images?emotion=${encodeURIComponent(history.filter)}`, { method: 'DELETE' })
+    await loadHistory()
+  } catch { /* 忽略 */ }
 }
 
 // 等待单个 prompt 完成；WS 漏消息时靠 history 轮询兜底
@@ -741,6 +914,16 @@ onUnmounted(() => {
 .ctrl-num { width: 120px; text-align: center; -moz-appearance: textfield; }
 .ctrl-num::-webkit-inner-spin-button, .ctrl-num::-webkit-outer-spin-button { -webkit-appearance: none; }
 
+.ctrl-select {
+  width: 100%;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px; color: var(--color-text);
+  font-size: 0.82rem; padding: 7px 10px; outline: none;
+  cursor: pointer; transition: border-color 0.2s;
+}
+.ctrl-select:focus { border-color: var(--color-primary); }
+
 .row-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .seed-input { width: 120px; }
 .seed-hint { font-size: 0.7rem; color: var(--color-text-muted); font-style: italic; }
@@ -862,4 +1045,65 @@ onUnmounted(() => {
 .batch-stat .cur  { color: var(--color-primary); }
 .batch-stat .ok   { color: #2ecc71; margin-left: auto; }
 .batch-stat .fail { color: #ff6b6b; }
+
+/* ── 生成 + 查看历史 一行 ── */
+.action-row { display: flex; gap: 8px; align-items: stretch; margin-top: 4px; }
+.action-row .btn-generate { flex: 1 1 0; margin-top: 0; }
+.btn-history {
+  flex: 1 1 0; white-space: nowrap;
+  padding: 0 16px; border-radius: 10px;
+  border: 1px solid var(--color-border); background: var(--color-surface-2);
+  color: var(--color-text-muted); font-size: 0.82rem; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.btn-history:hover { border-color: #2563eb; color: #2563eb; }
+
+/* ── 历史图片弹窗 ── */
+.history-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.history-modal {
+  display: flex; flex-direction: column;
+  width: 80vw; height: 80vh;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: 12px; overflow: hidden;
+}
+.history-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2); flex-shrink: 0;
+}
+.history-title { font-size: 0.9rem; font-weight: 700; color: var(--color-text); }
+.history-actions { display: flex; gap: 8px; }
+.history-filters {
+  display: flex; gap: 5px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--color-border); flex-shrink: 0;
+}
+.history-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.history-empty { text-align: center; color: var(--color-text-muted); font-size: 0.82rem; padding: 40px 0; }
+.history-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2); flex-shrink: 0;
+}
+.clear-emo-btn {
+  margin-right: auto;
+  padding: 5px 12px; border-radius: 8px;
+  border: 1px solid rgba(255, 107, 107, 0.4);
+  background: rgba(255, 107, 107, 0.1); color: #ff6b6b;
+  font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: all 0.2s;
+}
+.clear-emo-btn:hover { background: rgba(255, 107, 107, 0.2); }
+.del-btn {
+  position: absolute; top: 5px; right: 5px;
+  width: 24px; height: 24px; border-radius: 6px; border: none;
+  background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 0.8rem;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.2s;
+}
+.result-item:hover .del-btn { opacity: 1; }
+.del-btn:hover { background: rgba(255, 107, 107, 0.85); }
 </style>

@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 9500,
       strictPort: true,
+      allowedHosts: ['nas.makurochan.com'],
       proxy: {
         '/ws': {
           target: 'ws://localhost:9501',
@@ -41,6 +42,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 9500,
       strictPort: true,
+      allowedHosts: ['nas.makurochan.com'],
     },
   }
 })

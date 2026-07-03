@@ -34,3 +34,31 @@ export async function randomVrStimulus(emotionKey = '') {
   const list = scenesByEmotion[emotion]
   return { emotion, prompt: list[Math.floor(Math.random() * list.length)] }
 }
+
+/**
+ * 把已生成的刺激图回传后端，存入 image/<emotion>/<时间戳>.png。
+ * 先按可访问 URL（ComfyUI /view，经 Vite 代理）拉取图像字节，再 base64 回传。
+ * @param {string} url     图片可访问地址
+ * @param {string} emotion 情感 key（happy/sad/...）
+ * @param {string} [folder] 可选：image/ 下的分组子目录
+ * @returns {Promise<{ok: boolean, path?: string, filename?: string}>}
+ */
+export async function saveStimulusImage(url, emotion, folder = '') {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`fetch image failed [${res.status}]`)
+  const blob = await res.blob()
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('read image failed'))
+    reader.readAsDataURL(blob)
+  })
+  const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+  const saveRes = await fetch('/api/stimulus/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emotion, folder, ext, image: dataUrl }),
+  })
+  if (!saveRes.ok) throw new Error(`save failed [${saveRes.status}]`)
+  return saveRes.json()
+}

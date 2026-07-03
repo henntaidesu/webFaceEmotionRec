@@ -155,6 +155,9 @@ webside/node_modules/
 # 训练产出的模型权重
 backend/checkpoints/
 
+# 网页生成的刺激图（image/<emotion>/<时间戳>.png）
+image/
+
 # Datasets (downloaded locally, do not commit — see DataSet/prepare_fer2013.py)
 DataSet/**
 !DataSet/*.py

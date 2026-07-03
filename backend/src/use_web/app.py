@@ -1,14 +1,19 @@
 """FastAPI 应用：HTTP 健康检查 + WebSocket 实时情感识别。"""
 import asyncio
+import base64
+import binascii
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import torch
 from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .. import config
 from ..use_model import model_registry
@@ -166,6 +171,107 @@ async def models_delete(model_id: str):
         return JSONResponse(status_code=404, content={"ok": False, "error": "模型不存在"})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+# ── 网页生成的刺激图落盘（image/<emotion>/<时间戳>.png）────────────
+@app.post("/api/stimulus/save")
+async def stimulus_save(body: dict = Body(default=None)):
+    """接收前端生成的刺激图，按情感分目录存入 image/，文件名用时间戳（精确到秒）。
+
+    请求体：{"emotion": str, "image": data-url/base64, "ext"?: str, "folder"?: str}
+    """
+    body = body or {}
+    emotion = str(body.get("emotion") or "").strip().lower()
+    if emotion not in config.TRAIN_CLASSES:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "非法情感类别"})
+
+    data_url = body.get("image")
+    b64 = data_url.split(",", 1)[-1] if isinstance(data_url, str) else ""
+    if not b64:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少图像数据"})
+    try:
+        raw = base64.b64decode(b64)
+    except (ValueError, binascii.Error):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "图像解码失败"})
+
+    ext = re.sub(r"[^a-z0-9]", "", str(body.get("ext") or "png").lower()) or "png"
+    folder = re.sub(r"[^A-Za-z0-9_-]", "", str(body.get("folder") or ""))
+    dest_dir = config.IMAGE_DIR / folder / emotion if folder else config.IMAGE_DIR / emotion
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # 精确到秒命名；同一秒内重复时追加序号避免覆盖
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = dest_dir / f"{stamp}.{ext}"
+    n = 1
+    while path.exists():
+        path = dest_dir / f"{stamp}_{n}.{ext}"
+        n += 1
+    path.write_bytes(raw)
+
+    return {"ok": True, "path": str(path.relative_to(config.ROOT)), "filename": path.name}
+
+
+_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+
+@app.get("/api/stimulus/images")
+async def stimulus_images(emotion: str = "", limit: int = 1000):
+    """列出 image/ 下已保存的历史刺激图（按修改时间倒序，最新在前）。
+
+    每项：{"emotion", "filename", "path", "url", "mtime"}。
+    url 指向 /api/stimulus/files/<相对路径> 静态服务。
+    """
+    emo_filter = emotion.strip().lower()
+    items = []
+    for p in config.IMAGE_DIR.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in _IMAGE_EXT:
+            continue
+        emo = p.parent.name.lower()
+        if emo not in config.TRAIN_CLASSES:
+            continue
+        if emo_filter and emo != emo_filter:
+            continue
+        rel = p.relative_to(config.IMAGE_DIR).as_posix()
+        items.append({
+            "emotion": emo,
+            "filename": p.name,
+            "path": rel,
+            "url": f"/api/stimulus/files/{rel}",
+            "mtime": p.stat().st_mtime,
+        })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return {"images": items[:max(1, limit)], "total": len(items)}
+
+
+@app.delete("/api/stimulus/images")
+async def stimulus_images_delete(path: str = "", emotion: str = ""):
+    """删除历史刺激图：传 path 删单张；传 emotion 删该情感下全部。"""
+    root = config.IMAGE_DIR.resolve()
+    if path:
+        target = (config.IMAGE_DIR / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            return JSONResponse(status_code=400, content={"ok": False, "error": "非法路径"})
+        target.unlink()
+        return {"ok": True, "deleted": 1}
+
+    emo = emotion.strip().lower()
+    if emo and emo in config.TRAIN_CLASSES:
+        deleted = 0
+        for p in config.IMAGE_DIR.rglob("*"):
+            if p.is_file() and p.parent.name.lower() == emo and p.suffix.lower() in _IMAGE_EXT:
+                p.unlink()
+                deleted += 1
+        return {"ok": True, "deleted": deleted}
+
+    return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 path 或 emotion"})
+
+
+# 静态服务已保存的刺激图（历史查看用）
+app.mount(
+    "/api/stimulus/files",
+    StaticFiles(directory=str(config.IMAGE_DIR)),
+    name="stimulus_files",
+)
 
 
 # ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────

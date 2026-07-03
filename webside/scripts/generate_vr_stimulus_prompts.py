@@ -3,139 +3,70 @@
 每条是一个「能诱导某种情绪」的 360° 全景场景（等距圆柱投影），
 用于「VR 刺激图」面板：戴 Quest Pro 的受试者看到该沉浸场景后自然做出对应表情。
 
+提示词素材（场景 / 氛围 / 画质）不写在代码里，统一存放在
+`vr_stimulus_sources.csv`（列：emotion,kind,text；kind ∈ scene/mood/quality，
+quality 行 emotion 填 `all`，为所有情绪共用）。本脚本读取该表，
+对每类情绪做 scene × mood × quality 组合，去重后写出成品 CSV。
+
 与项目其余数据脚本保持一致，用 Python 编写（无第三方依赖）。
 运行：python webside/scripts/generate_vr_stimulus_prompts.py
 """
+import csv
 import os
 
+# 全景触发前缀（与前端 PANO_PREFIX 保持一致，喂给全景 LoRA）
 PREFIX = (
     "360 panorama, equirectangular projection, full spherical seamless panorama, photograph, "
 )
 
-# 每类情绪：核心场景 × 氛围修饰 → 组合出多样的诱导场景
-EMOTIONS = {
-    "happy": {
-        "scenes": [
-            "sunny tropical beach paradise, turquoise water, white sand, palm trees",
-            "vast blooming flower field under a clear blue sky, butterflies drifting",
-            "colorful amusement park with a carousel and floating balloons",
-            "cozy sunlit green meadow with playful golden retriever puppies",
-            "vibrant summer festival with fireworks and confetti at dusk",
-            "rainbow over a lush waterfall valley, birds flying",
-            "warm spring cherry blossom park in full bloom, petals in the air",
-            "joyful lantern festival with glowing paper lanterns floating up",
-        ],
-        "moods": ["bright cheerful daylight", "warm golden hour glow", "festive joyful atmosphere", "uplifting radiant mood"],
-    },
-    "sad": {
-        "scenes": [
-            "lonely rainy city street at dusk, wet empty pavement",
-            "abandoned empty room with dim light and floating dust",
-            "foggy grey cemetery under bare leafless trees",
-            "desolate autumn forest with falling withered leaves",
-            "empty quiet hospital corridor at night",
-            "deserted rainy train platform, a single flickering lamp",
-            "grey overcast seashore with cold crashing waves, no one around",
-            "faded old house interior with covered furniture and cobwebs",
-        ],
-        "moods": ["grey melancholic mood", "somber sorrowful atmosphere", "cold blue lonely light", "overcast heavy gloom"],
-    },
-    "angry": {
-        "scenes": [
-            "chaotic gridlock traffic jam, glaring red brake lights",
-            "stormy red sky over a burning industrial wasteland",
-            "ruined war-torn city street with rubble and thick smoke",
-            "raging wildfire consuming a dark forest, fierce flames surrounding",
-            "crowded overwhelming subway platform crushed at rush hour",
-            "violent thunderstorm over jagged black volcanic rocks",
-            "polluted factory zone with belching smokestacks and grime",
-            "turbulent crimson lava field cracking and erupting",
-        ],
-        "moods": ["intense oppressive atmosphere", "tense hostile mood", "aggressive fiery red tone", "suffocating heat and noise"],
-    },
-    "surprise": {
-        "scenes": [
-            "sudden glowing magical portal opening in a mystical forest",
-            "surreal floating islands in the sky with cascading waterfalls",
-            "spectacular cosmic aurora and an exploding galaxy overhead",
-            "giant whimsical creature emerging unexpectedly from the clouds",
-            "fantastical crystal cave suddenly revealed, glittering everywhere",
-            "a whale gliding impossibly through a sky full of stars",
-            "an enormous unexpected fireworks finale bursting all around",
-            "a hidden bioluminescent forest lighting up all at once",
-        ],
-        "moods": ["dazzling light burst", "breathtaking unexpected vista", "awe-inspiring astonishing scene", "wondrous sudden reveal"],
-    },
-    "fear": {
-        "scenes": [
-            "dark haunted forest at midnight, twisted trees, menacing shadows",
-            "abandoned decaying asylum hallway with flickering lights",
-            "standing at the edge of a dizzying tall cliff over a deep abyss",
-            "deep pitch-black cave with an unknown lurking presence",
-            "creepy foggy graveyard at night with looming tombstones",
-            "narrow flooded tunnel in total darkness, distant echoing",
-            "derelict horror mansion staircase under a blood moon",
-            "endless dark corridor with doors slowly creaking open",
-        ],
-        "moods": ["eerie chilling terror", "claustrophobic dread", "ominous horror atmosphere", "cold creeping fear"],
-    },
-    "disgust": {
-        "scenes": [
-            "overflowing garbage dump with rotting waste and swarming flies",
-            "dirty clogged sewer tunnel with grimy dripping sludge",
-            "moldy abandoned kitchen with rotten spoiled food",
-            "swarm of insects crawling over decaying matter",
-            "polluted toxic swamp with murky slime and floating refuse",
-            "filthy neglected public restroom, stained and grimy",
-            "pile of spoiled meat covered in mold in a dim cellar",
-            "stagnant green pond thick with scum and dead fish",
-        ],
-        "moods": ["revolting filthy scene", "nauseating foul atmosphere", "repulsive decay", "sickening grime"],
-    },
-    "neutral": {
-        "scenes": [
-            "plain minimalist empty white studio",
-            "quiet serene zen garden with raked sand and stones",
-            "calm empty library reading room",
-            "gentle misty lake at dawn with flat calm water",
-            "simple tidy modern living room",
-            "empty softly lit art gallery with blank walls",
-            "quiet office space with neutral grey furniture",
-            "plain overcast open field, flat horizon",
-        ],
-        "moods": ["soft even light, calm neutral space", "tranquil balanced stillness", "peaceful quiet mood", "relaxed plain atmosphere"],
-    },
-}
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC_PATH = os.path.join(HERE, "vr_stimulus_sources.csv")
+OUT_PATH = os.path.normpath(os.path.join(HERE, "..", "public", "vr_stimulus_prompts.csv"))
 
-QUALITY = [
-    "ultra detailed, sharp focus, high resolution",
-    "cinematic, highly detailed, realistic",
-    "photorealistic, rich detail, immersive",
-    "crisp detail, natural lighting, lifelike",
-]
+
+def load_sources(path):
+    """读素材表 → (scenes_by_emotion, moods_by_emotion, qualities)。保持文件内出现顺序。"""
+    scenes, moods, qualities = {}, {}, []
+    with open(path, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            emotion = (row["emotion"] or "").strip()
+            kind = (row["kind"] or "").strip()
+            text = (row["text"] or "").strip()
+            if not text:
+                continue
+            if kind == "quality":
+                qualities.append(text)
+            elif kind == "scene":
+                scenes.setdefault(emotion, []).append(text)
+            elif kind == "mood":
+                moods.setdefault(emotion, []).append(text)
+    return scenes, moods, qualities
 
 
 def main():
+    scenes, moods, qualities = load_sources(SRC_PATH)
+
     lines = ["emotion,prompt"]
-    for emotion, cfg in EMOTIONS.items():
+    per_emotion = {}
+    for emotion in scenes:
         seen = set()
-        for scene in cfg["scenes"]:
-            for mood in cfg["moods"]:
-                for q in QUALITY:
+        for scene in scenes[emotion]:
+            for mood in moods.get(emotion, []):
+                for q in qualities:
                     prompt = f"{PREFIX}{scene}, {mood}, {q}"
                     if prompt in seen:
                         continue
                     seen.add(prompt)
                     escaped = prompt.replace('"', '""')
                     lines.append(f'{emotion},"{escaped}"')
+        per_emotion[emotion] = len(seen)
 
-    out_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "public", "vr_stimulus_prompts.csv"
-    )
-    out_path = os.path.normpath(out_path)
-    with open(out_path, "w", encoding="utf-8", newline="") as f:
+    with open(OUT_PATH, "w", encoding="utf-8", newline="") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"wrote {len(lines) - 1} stimulus prompts -> {out_path}")
+
+    summary = ", ".join(f"{e}={n}" for e, n in per_emotion.items())
+    print(f"wrote {len(lines) - 1} stimulus prompts -> {OUT_PATH}")
+    print(f"per emotion: {summary}")
 
 
 if __name__ == "__main__":

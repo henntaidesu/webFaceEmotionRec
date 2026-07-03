@@ -155,6 +155,27 @@ export function applyPromptOverrides(apiWorkflow, { positive, negative, seed }) 
   return apiWorkflow
 }
 
+/**
+ * 覆盖生成参数（分辨率/步数/CFG/采样器/调度器）到 API 格式工作流。
+ * 仅改写节点中已存在、且为「控件值」（非连线数组）的对应输入。
+ */
+export function applyGenParams(apiWorkflow, { width, height, steps, cfg, sampler, scheduler } = {}) {
+  const set = (inp, key, val) => {
+    if (val == null) return
+    if (key in inp && !Array.isArray(inp[key])) inp[key] = val
+  }
+  for (const node of Object.values(apiWorkflow)) {
+    const inp = node.inputs ?? {}
+    set(inp, 'width', width)
+    set(inp, 'height', height)
+    set(inp, 'steps', steps)
+    set(inp, 'cfg', cfg)
+    set(inp, 'sampler_name', sampler)
+    set(inp, 'scheduler', scheduler)
+  }
+  return apiWorkflow
+}
+
 /** 提交生成任务，返回 { prompt_id } */
 export async function queuePrompt(clientId, workflow) {
   const res = await fetch(`${base()}/prompt`, {
