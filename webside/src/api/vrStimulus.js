@@ -43,7 +43,7 @@ export async function randomVrStimulus(emotionKey = '') {
  * @param {string} [folder] 可选：image/ 下的分组子目录
  * @returns {Promise<{ok: boolean, path?: string, filename?: string}>}
  */
-export async function saveStimulusImage(url, emotion, folder = '') {
+export async function saveStimulusImage(url, emotion, folder = '', { show = false } = {}) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`fetch image failed [${res.status}]`)
   const blob = await res.blob()
@@ -54,11 +54,27 @@ export async function saveStimulusImage(url, emotion, folder = '') {
     reader.readAsDataURL(blob)
   })
   const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+  // show=true 时后端同时把这张图标记为「当前」，Quest Pro 上的 Unity 会轮询并贴到全景天空盒。
   const saveRes = await fetch('/api/stimulus/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ emotion, folder, ext, image: dataUrl }),
+    body: JSON.stringify({ emotion, folder, ext, image: dataUrl, show }),
   })
   if (!saveRes.ok) throw new Error(`save failed [${saveRes.status}]`)
   return saveRes.json()
+}
+
+/**
+ * 把一张已保存的历史刺激图推送到 VR 头显显示（用于「查看历史图片」里手动推送）。
+ * @param {string} path 后端返回的相对路径（image/<emotion>/xxx.png 或 <emotion>/xxx.png）
+ * @returns {Promise<{ok: boolean, version?: number, url?: string}>}
+ */
+export async function showStimulusInHeadset(path) {
+  const res = await fetch('/api/stimulus/show', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!res.ok) throw new Error(`show failed [${res.status}]`)
+  return res.json()
 }

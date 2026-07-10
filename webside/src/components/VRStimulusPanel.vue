@@ -480,7 +480,8 @@ async function buildWorkflow({ positive, seedVal } = {}) {
 // 仅展示「本次生成」（不再累积历史，历史见「查看历史图片」），并异步存盘到 image/<emotion>/
 function registerResults(urls, emo, label) {
   results.value = urls.map((u) => ({ url: u, emotion: emo, label }))
-  for (const u of urls) saveStimulusImage(u, emo).catch(() => {})
+  // 存盘；第一张同时 show=true，后端标记为「当前」→ Quest Pro 上的 Unity 立即贴到全景天空盒。
+  urls.forEach((u, i) => saveStimulusImage(u, emo, '', { show: i === 0 }).catch(() => {}))
 }
 
 async function generate() {

@@ -16,10 +16,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
+from ..use_capture import session_store
 from ..use_model import model_registry
 from ..use_model.emotion import analyze_frame
 from ..use_model.fea_emotion import classify_fea
 from ..use_model.models import get_models
+from ..use_predict import predictor
 from ..use_eval import eval_store, evaluation
 from ..use_train import train_store, training
 from .image_utils import decode_base64_image
@@ -208,6 +210,9 @@ async def stimulus_save(body: dict = Body(default=None)):
         n += 1
     path.write_bytes(raw)
 
+    if body.get("show"):
+        _set_current_stimulus(path, emotion)
+
     return {"ok": True, "path": str(path.relative_to(config.ROOT)), "filename": path.name}
 
 
@@ -274,6 +279,47 @@ app.mount(
 )
 
 
+# ── 当前要在 VR 头显里显示的刺激图（webside 生成后即时推送）─────────────
+# webside「VR 刺激图」面板生成并存图后，用 save 的 show=true 或 /api/stimulus/show
+# 把某张图标记为「当前」；Quest Pro 上的 Unity 轮询 /api/stimulus/current，
+# version 变大时下载该图贴到全景天空盒。
+_current_stimulus: dict = {"version": 0, "path": None, "emotion": None, "url": None, "ts": 0}
+
+
+def _set_current_stimulus(path, emotion: str) -> None:
+    """把一张（已在 IMAGE_DIR 下的）图设为「当前」，version 自增。"""
+    rel = path.relative_to(config.IMAGE_DIR).as_posix()
+    _current_stimulus["version"] += 1
+    _current_stimulus["path"] = rel
+    _current_stimulus["emotion"] = emotion
+    _current_stimulus["url"] = f"/api/stimulus/files/{rel}"
+    _current_stimulus["ts"] = int(time.time() * 1000)
+
+
+@app.get("/api/stimulus/current")
+async def stimulus_current():
+    """Unity 头显轮询：返回当前应显示的刺激图 {version,url,path,emotion,ts}。
+    version 从 0 开始，>0 表示有图；头显记录 version，变大时下载 url 贴天空盒。"""
+    return _current_stimulus
+
+
+@app.post("/api/stimulus/show")
+async def stimulus_show(body: dict = Body(default=None)):
+    """把一张已保存的刺激图标记为「当前」推给头显。
+    请求体 {"path": "image/<emotion>/xxx.png" 或 "<emotion>/xxx.png"}。"""
+    body = body or {}
+    rel = str(body.get("path") or "").strip().replace("\\", "/")
+    if not rel:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 path"})
+    if rel.startswith("image/"):
+        rel = rel[len("image/"):]
+    target = (config.IMAGE_DIR / rel).resolve()
+    if not target.is_relative_to(config.IMAGE_DIR.resolve()) or not target.is_file():
+        return JSONResponse(status_code=400, content={"ok": False, "error": "非法路径"})
+    _set_current_stimulus(target, target.parent.name.lower())
+    return {"ok": True, "version": _current_stimulus["version"], "url": _current_stimulus["url"]}
+
+
 # ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────
 # 机内摄像头不开放原始图像，头显侧（Unity/Meta XR Movement SDK）把 63 维 FEA
 # 推到这里；后端分类后，前端「微情感生成」页轮询 /api/fea/latest 取用。
@@ -304,6 +350,67 @@ async def fea_latest():
     return {"success": True, "timestamp_ms": data["timestamp_ms"], "faces": [
         {"dominant_en": data["dominant_en"], "dominant": data["dominant"], "emotions": data["emotions"]}
     ]}
+
+
+# ── FEA 时序闭环采集：会话记录（头显 Unity 经 LAN 推四路时序）─────────
+# 任务书 docs/任务书_VR微情感时序采集与情绪预测.md 的 M-B。
+@app.post("/api/session/start")
+async def session_start(body: dict = Body(default=None)):
+    """建立采集会话：{"subject_id", "session_id"?, "fea_rate_hz"?, "sync_offset_ms"?}。"""
+    return session_store.start_session(body or {})
+
+
+@app.post("/api/session/ingest")
+async def session_ingest(body: dict = Body(default=None)):
+    """追加一批四路事件：{"session_id", "fea":[...], "gaze":[...], "stimulus":[...], "selfreport":[...]}。"""
+    try:
+        return session_store.ingest(body or {})
+    except KeyError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "会话不存在或未 start"})
+
+
+@app.post("/api/session/stop")
+async def session_stop(body: dict = Body(default=None)):
+    """收尾并写 meta.json：{"session_id", "sync_offset_ms"?}。"""
+    try:
+        return session_store.stop_session(body or {})
+    except KeyError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "会话不存在或已 stop"})
+
+
+@app.get("/api/session/list")
+async def session_list():
+    """列出已落盘会话（含进行中的活动会话）。"""
+    return session_store.list_sessions()
+
+
+# ── 情绪预测（时序）：/api/predict + 模型注册表 ───────────────────────
+# 任务书 M-C。用过去数秒序列预测未来几秒 7 类走向；默认规则式基线，无需训练即可用。
+@app.get("/api/predict/models")
+async def predict_models():
+    return predictor.list_predictors()
+
+
+@app.post("/api/predict/active")
+async def predict_set_active(body: dict = Body(default=None)):
+    model_id = (body or {}).get("id")
+    if not model_id:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少模型 id"})
+    try:
+        return predictor.set_active(model_id, models.device)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "预测模型不存在"})
+    except RuntimeError as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+@app.post("/api/predict")
+async def predict_endpoint(body: dict = Body(default=None)):
+    """输入过去数秒四路滑窗 → 输出未来 horizon 秒 7 类走向。请求/响应见任务书 §6。"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, lambda: predictor.predict(body or {}, models.device)
+    )
 
 
 @app.websocket("/ws/emotion")

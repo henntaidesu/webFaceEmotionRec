@@ -83,3 +83,17 @@ TRAIN_DEFAULTS = {
     "img_size": 224,
     "num_workers": 8,  # 多进程并行解码喂 GPU；Windows 下如遇兼容问题可调回 0
 }
+
+# ── FEA 时序闭环采集 + 情绪预测（任务书_VR微情感时序采集与情绪预测.md）──────
+# Quest Pro 63 维 FEA blendshape 维度（OVRFaceExpressions 顺序，真源见
+# use_model/fea_emotion.OVR_FACE_EXPRESSIONS）
+FEA_DIM = 63
+# 头显 Unity 经 LAN 推来的会话时序按 <subject_id>/<session_id>/ 落盘于此
+CAPTURE_DIR = Path(os.getenv("CAPTURE_DIR", str(ROOT / "Capture")))
+CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+# 训练出的情绪预测（时序）模型：<id>.pt + <id>.json，独立于图像 FER 的 CHECKPOINT_DIR
+PREDICT_CHECKPOINT_DIR = Path(os.getenv("PREDICT_CHECKPOINT_DIR", str(ROOT / "backend" / "predict_checkpoints")))
+PREDICT_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+# 预测默认：用过去 window 秒序列预测未来 horizon 秒（中时走向）
+PREDICT_WINDOW_S = float(os.getenv("PREDICT_WINDOW_S", "5"))
+PREDICT_HORIZON_S = float(os.getenv("PREDICT_HORIZON_S", "3"))
