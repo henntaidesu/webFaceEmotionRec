@@ -14,6 +14,12 @@ def _env_flag(name: str, default: bool) -> bool:
 HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
 PORT = int(os.getenv("BACKEND_PORT", "9501"))
 
+# ── 头显 USB 连接（adb 反向隧道，网页驱动）─────────────────────────
+# 用数据线连头显：后端用 adb 建反向隧道，头显访问 localhost:PORT 经 USB 直达后端，
+# 免 WiFi/同网段/防火墙。ADB_PATH 留空则自动在常见位置（含 MQDH）与 PATH 查找。
+ADB_PATH = os.getenv("ADB_PATH", "")
+HEADSET_PACKAGE = os.getenv("HEADSET_PACKAGE", "com.DefaultCompany.webFaceEmotionRec2")
+
 # ── CUDA 设备 ─────────────────────────────────────────────────────
 # 默认强制使用 CUDA：无可用 GPU 时直接报错退出。
 # 设置环境变量 REQUIRE_CUDA=0 可关闭，改为在无 GPU 时回退到 CPU。

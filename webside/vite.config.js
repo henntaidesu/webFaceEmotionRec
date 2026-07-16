@@ -5,13 +5,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const comfyTarget = env.VITE_COMFYUI_PROXY_TARGET || 'http://127.0.0.1:8188'
 
+  // 公网访问（路由器端口映射到公网 IP/DDNS 时 Host 不固定）：默认放行任意 Host。
+  // 如需收紧，设环境变量 VITE_ALLOWED_HOSTS（逗号分隔的域名/IP），例：
+  //   VITE_ALLOWED_HOSTS=nas.makurochan.com,1.2.3.4
+  const allowedHosts = env.VITE_ALLOWED_HOSTS
+    ? env.VITE_ALLOWED_HOSTS.split(',').map((s) => s.trim()).filter(Boolean)
+    : true
+
   return {
     plugins: [vue()],
     server: {
       host: '0.0.0.0',
       port: 9500,
       strictPort: true,
-      allowedHosts: ['nas.makurochan.com'],
+      allowedHosts,
       proxy: {
         '/ws': {
           target: 'ws://localhost:9501',
@@ -42,7 +49,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 9500,
       strictPort: true,
-      allowedHosts: ['nas.makurochan.com'],
+      allowedHosts,
     },
   }
 })

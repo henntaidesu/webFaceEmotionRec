@@ -24,6 +24,7 @@ from ..use_model.models import get_models
 from ..use_predict import predictor
 from ..use_eval import eval_store, evaluation
 from ..use_train import train_store, training
+from . import headset
 from .image_utils import decode_base64_image
 
 logging.basicConfig(level=logging.INFO)
@@ -318,6 +319,21 @@ async def stimulus_show(body: dict = Body(default=None)):
         return JSONResponse(status_code=400, content={"ok": False, "error": "非法路径"})
     _set_current_stimulus(target, target.parent.name.lower())
     return {"ok": True, "version": _current_stimulus["version"], "url": _current_stimulus["url"]}
+
+
+# ── 头显 USB 连接（网页驱动 adb 反向隧道）─────────────────────────────
+@app.get("/api/headset/status")
+async def headset_status():
+    """网页轮询头显 USB 连接状态：adb 是否找到、设备是否连接/授权、隧道是否建立、应用是否在跑。"""
+    return headset.status(config.PORT, config.HEADSET_PACKAGE)
+
+
+@app.post("/api/headset/connect")
+async def headset_connect(body: dict = Body(default=None)):
+    """网页「连接头显」：用数据线建立 adb 反向隧道（头显 localhost:PORT → 后端），可选启动应用。"""
+    body = body or {}
+    launch = bool(body.get("launch", True))
+    return headset.connect(config.PORT, config.HEADSET_PACKAGE, launch)
 
 
 # ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────

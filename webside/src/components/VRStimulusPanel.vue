@@ -28,6 +28,19 @@
       <template v-else>
         <p class="panel-desc">{{ locale.stimulus.desc }}</p>
 
+        <!-- ── 头显 USB 连接（后端 adb 反向隧道，网页驱动）── -->
+        <div class="headset-bar">
+          <span class="hs-title">🔌 {{ locale.stimulus.hsTitle }}</span>
+          <span class="hs-status" :class="headset.ok ? 'hs-ok' : 'hs-bad'">{{ headsetText }}</span>
+          <button class="hs-btn" :disabled="headset.busy" @click="doConnectHeadset">
+            {{ headset.busy ? locale.stimulus.hsConnecting : locale.stimulus.hsConnect }}
+          </button>
+          <button class="hs-btn hs-ghost" :disabled="headset.busy" @click="refreshHeadset">
+            {{ locale.stimulus.hsRefresh }}
+          </button>
+        </div>
+        <p class="hs-hint">{{ locale.stimulus.hsHint }}</p>
+
         <!-- 目标情绪 -->
         <div class="field">
           <label class="field-label">{{ locale.stimulus.emotion }}</label>
@@ -303,6 +316,7 @@ import {
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
 import { randomVrStimulus, saveStimulusImage } from '../api/vrStimulus.js'
+import { getHeadsetStatus, connectHeadset } from '../api/headset.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
 const PanoramaViewer = defineAsyncComponent(() => import('./PanoramaViewer.vue'))
 
@@ -443,6 +457,49 @@ const statusMsg  = ref('')
 const statusMsgClass = ref('')
 const results    = ref([]) // { url, emotion, label }
 const panoSrc    = ref(null)
+
+// ── 头显 USB 连接（后端 adb 反向隧道）──
+const headset = reactive({ busy: false, status: null, ok: false, msg: '' })
+
+const headsetText = computed(() => {
+  const L = props.locale.stimulus
+  if (headset.msg) return headset.msg
+  const s = headset.status
+  if (!s) return '—'
+  if (!s.adb_found) return L.hsNoAdb
+  if (s.unauthorized) return L.hsUnauth
+  if (!s.device_connected) return L.hsNoDevice
+  if (s.reverse_ok) return L.hsReady + (s.app_running ? L.hsAppRunning : '')
+  return L.hsConnect
+})
+
+async function refreshHeadset() {
+  try {
+    const s = await getHeadsetStatus()
+    headset.status = s
+    headset.ok = !!(s.device_connected && s.reverse_ok)
+    headset.msg = ''
+  } catch (e) {
+    headset.msg = e.message
+    headset.ok = false
+  }
+}
+
+async function doConnectHeadset() {
+  headset.busy = true
+  headset.msg = ''
+  try {
+    const r = await connectHeadset(true)
+    headset.status = r.status || headset.status
+    headset.ok = !!r.ok
+    if (!r.ok && r.error) headset.msg = r.error
+  } catch (e) {
+    headset.msg = e.message
+    headset.ok = false
+  } finally {
+    headset.busy = false
+  }
+}
 
 const progressPct = computed(() =>
   progress.max > 0 ? Math.round((progress.current / progress.max) * 100) : 0,
@@ -811,6 +868,7 @@ let connTimer = null
 onMounted(() => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
+  refreshHeadset()
 })
 onUnmounted(() => {
   clearInterval(connTimer)
@@ -1107,4 +1165,26 @@ onUnmounted(() => {
 }
 .result-item:hover .del-btn { opacity: 1; }
 .del-btn:hover { background: rgba(255, 107, 107, 0.85); }
+
+/* ── 头显 USB 连接栏 ── */
+.headset-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin: 4px 0 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px;
+}
+.hs-title { font-weight: 600; font-size: 0.9rem; }
+.hs-status {
+  font-size: 0.85rem; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid transparent;
+}
+.hs-status.hs-ok { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.1); }
+.hs-status.hs-bad { color: #f0a0a0; border-color: rgba(240, 160, 160, 0.35); background: rgba(240, 160, 160, 0.08); }
+.hs-btn {
+  margin-left: auto; padding: 6px 16px; border-radius: 8px; border: none;
+  background: #3b82f6; color: #fff; font-size: 0.85rem; cursor: pointer;
+}
+.hs-btn:disabled { opacity: 0.5; cursor: default; }
+.hs-btn.hs-ghost { margin-left: 0; background: rgba(255, 255, 255, 0.1); }
+.hs-hint { font-size: 0.78rem; color: rgba(255, 255, 255, 0.45); margin: 0 0 10px; }
 </style>
