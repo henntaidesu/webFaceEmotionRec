@@ -66,6 +66,7 @@ const suffix = computed(() => route.path.replace(/^\/(cn|jp)/, ''))
 const langSwitchPath = computed(() => (isJp.value ? '/cn' : '/jp') + suffix.value)
 
 const navItems = computed(() => [
+  { to: `${prefix.value}/about`, label: currentLocale.value.nav.about },
   { to: prefix.value, label: currentLocale.value.nav.detect },
   { to: `${prefix.value}/train`, label: currentLocale.value.nav.train },
   { to: `${prefix.value}/eval`, label: currentLocale.value.nav.evaluate },

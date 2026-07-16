@@ -10,9 +10,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import torch
-from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
@@ -334,6 +334,32 @@ async def headset_connect(body: dict = Body(default=None)):
     body = body or {}
     launch = bool(body.get("launch", True))
     return headset.connect(config.PORT, config.HEADSET_PACKAGE, launch)
+
+
+# ── 头显用户视角回传（头显渲染当前视角 → 后端中转 → 网页预览）────────
+# 头显侧 HeadsetViewStreamer.cs 把中央眼相机渲成 JPEG，按帧率 POST 原始字节到
+# /api/headset/view；后端只保留最新一帧，网页 <img> 轮询 GET 取回显示。
+_headset_view: dict = {"jpeg": None, "ts": 0}
+
+
+@app.post("/api/headset/view")
+async def headset_view_upload(request: Request):
+    """接收头显当前视角的一帧 JPEG（Content-Type: image/jpeg 原始字节），只存最新一帧。"""
+    data = await request.body()
+    if data:
+        _headset_view["jpeg"] = data
+        _headset_view["ts"] = int(time.time() * 1000)
+    return {"ok": True, "bytes": len(data), "ts": _headset_view["ts"]}
+
+
+@app.get("/api/headset/view")
+async def headset_view_get():
+    """网页拉取头显最新视角帧；无帧时返回 204。"""
+    jpg = _headset_view["jpeg"]
+    if not jpg:
+        return Response(status_code=204)
+    return Response(content=jpg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 # ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import AboutPanel from './components/AboutPanel.vue'
 import EmotionDetector from './components/EmotionDetector.vue'
 import TrainingPanel from './components/TrainingPanel.vue'
 import EvaluationPanel from './components/EvaluationPanel.vue'
@@ -10,6 +11,8 @@ import ja from './locales/ja.js'
 
 const routes = [
   { path: '/',            redirect: '/cn' },
+  { path: '/cn/about',    component: AboutPanel,       props: { locale: zh } },
+  { path: '/jp/about',    component: AboutPanel,       props: { locale: ja } },
   { path: '/cn',          component: EmotionDetector, props: { locale: zh } },
   { path: '/jp',          component: EmotionDetector, props: { locale: ja } },
   { path: '/cn/train',    component: TrainingPanel,    props: { locale: zh } },

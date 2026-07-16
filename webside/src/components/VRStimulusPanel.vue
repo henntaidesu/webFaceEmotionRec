@@ -41,6 +41,17 @@
         </div>
         <p class="hs-hint">{{ locale.stimulus.hsHint }}</p>
 
+        <!-- ── 头显用户视角预览（头显回传当前画面）── -->
+        <div class="hs-view">
+          <button class="hs-btn hs-ghost" @click="toggleHeadsetView">
+            {{ showHeadsetView ? locale.stimulus.hsViewHide : locale.stimulus.hsViewShow }}
+          </button>
+          <div v-if="showHeadsetView" class="hs-view-box">
+            <img v-if="headsetViewSrc" :src="headsetViewSrc" class="hs-view-img" alt="headset view" />
+            <span v-else class="hs-view-waiting">{{ locale.stimulus.hsViewWaiting }}</span>
+          </div>
+        </div>
+
         <!-- 目标情绪 -->
         <div class="field">
           <label class="field-label">{{ locale.stimulus.emotion }}</label>
@@ -316,7 +327,7 @@ import {
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
 import { randomVrStimulus, saveStimulusImage } from '../api/vrStimulus.js'
-import { getHeadsetStatus, connectHeadset } from '../api/headset.js'
+import { getHeadsetStatus, connectHeadset, fetchHeadsetView } from '../api/headset.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
 const PanoramaViewer = defineAsyncComponent(() => import('./PanoramaViewer.vue'))
 
@@ -500,6 +511,35 @@ async function doConnectHeadset() {
     headset.busy = false
   }
 }
+
+// ── 头显用户视角预览（轮询 /api/headset/view 拉最新一帧）──
+const showHeadsetView = ref(false)
+const headsetViewSrc = ref('')
+let headsetViewTimer = null
+
+async function pollHeadsetView() {
+  const blob = await fetchHeadsetView().catch(() => null)
+  if (!blob || !showHeadsetView.value) return
+  if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
+  headsetViewSrc.value = URL.createObjectURL(blob)
+}
+
+function toggleHeadsetView() {
+  showHeadsetView.value = !showHeadsetView.value
+  if (showHeadsetView.value) {
+    headsetViewTimer = setInterval(pollHeadsetView, 150)
+  } else {
+    if (headsetViewTimer) clearInterval(headsetViewTimer)
+    headsetViewTimer = null
+    if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
+    headsetViewSrc.value = ''
+  }
+}
+
+onUnmounted(() => {
+  if (headsetViewTimer) clearInterval(headsetViewTimer)
+  if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
+})
 
 const progressPct = computed(() =>
   progress.max > 0 ? Math.round((progress.current / progress.max) * 100) : 0,
@@ -1187,4 +1227,18 @@ onUnmounted(() => {
 .hs-btn:disabled { opacity: 0.5; cursor: default; }
 .hs-btn.hs-ghost { margin-left: 0; background: rgba(255, 255, 255, 0.1); }
 .hs-hint { font-size: 0.78rem; color: rgba(255, 255, 255, 0.45); margin: 0 0 10px; }
+.hs-view { margin: 0 0 12px; }
+.hs-view-box {
+  margin-top: 8px;
+  aspect-ratio: 16 / 9;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.hs-view-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.hs-view-waiting { font-size: 0.82rem; color: rgba(255, 255, 255, 0.4); }
 </style>

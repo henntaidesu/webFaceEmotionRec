@@ -23,3 +23,14 @@ export async function connectHeadset(launch = true) {
   if (!r.ok) throw new Error(`headset connect failed [${r.status}]`)
   return r.json()
 }
+
+/**
+ * 拉取头显当前用户视角的最新一帧。
+ * 头显里应用未运行 / 尚无帧时后端返回 204 → 这里返回 null。
+ * @returns {Promise<Blob|null>}
+ */
+export async function fetchHeadsetView() {
+  const r = await fetch(`/api/headset/view?t=${Date.now()}`)
+  if (r.status !== 200) return null
+  return r.blob()
+}

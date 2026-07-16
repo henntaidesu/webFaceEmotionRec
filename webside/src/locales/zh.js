@@ -4,6 +4,7 @@ export default {
   langSwitchPath: '/jp',
 
   nav: {
+    about: '项目介绍',
     detect: '情感识别',
     train: '模型训练',
     evaluate: '模型评测',
@@ -11,6 +12,142 @@ export default {
     comfyExpression: '生成表情',
     comfyStimulus: 'VR 刺激图',
     comfyAffective: '微情感生成',
+  },
+
+  about: {
+    hero: {
+      tag: '情感计算',
+      title: 'VR 遮挡下的实时人脸情绪识别与微情感时序预测',
+      sub: '当头显遮挡上半脸、且拿不到原始人脸图，如何仍能实时识别、并提前预测佩戴者的情绪？',
+      metaProjectLabel: '项目',
+      presenterLabel: '汇报人：',
+    },
+
+    bgNum: '01',
+    bgEyebrow: '研究背景 · Background',
+    bgTitle: 'VR 正成为下一代交互平台，却让人脸表情识别「失灵」',
+    bgLead: '情感计算让机器读懂人的情绪，是自然人机交互的核心。但沉浸式 VR/AR 带来了一个传统 FER 从未面对的场景——头显把最富表情的上半脸挡住了。',
+    bgRows: [
+      { k: '痛点', t: '上半脸被物理遮挡', sub: '头显固定遮住眉、眼区域，而这里承载了愤怒、恐惧、惊讶等大量表情信息，普通摄像头式 FER 直接失效。' },
+      { k: '红线', t: '拿不到原始人脸图像', sub: 'Quest Pro 等主流头显出于隐私，不开放内向摄像头的原始画面，只暴露 63 维面部表情系数（FEA blendshape）。' },
+      { k: '机会', t: '信号其实更丰富了', sub: '头显能高频输出被遮挡区域的肌肉激活 + 眼动/注视，这些是普通相机拿不到的——问题从「看不见」变成「换一种方式看」。' },
+    ],
+
+    conNum: '02',
+    conEyebrow: '关键挑战与约束 · Constraints',
+    conTitle: '四条约束，决定了整套技术方案的形态',
+    conCards: [
+      { k: 'OCCLUSION', h: '遮挡鲁棒', p: '模型必须在上半脸缺失下工作。用 VRMask 模拟头显遮挡做增强，验证集固定遮挡——报告精度反映「戴着 VR 时」的真实表现。' },
+      { k: 'PRIVACY', h: '隐私红线', p: '只有 63 维 blendshape。图像模态要么外接相机（主线），要么彻底放弃图像、纯靠 FEA（支线）。' },
+      { k: 'MICRO', h: '微表情', p: '微表情持续不到 0.5 秒。取消图像后只能靠高帧率 FEA（≥30–60Hz）捕捉 onset / apex / offset。' },
+      { k: 'DOMAIN', h: '域差与泄漏', p: '合成数据到真人存在域差；一律按受试者划分训练/测试集，杜绝同一个人跨集的身份泄漏。' },
+    ],
+
+    dirNum: '03',
+    dirEyebrow: '研究方向总览 · Direction',
+    dirTitle: '两条互补的研究线，共享一套刺激与后端平台',
+    dirMainTag: 'MAIN LINE · 识别当前',
+    dirMainTitle: 'VR 遮挡图像式 FER',
+    dirMainDesc: '外接相机拍下半脸 RGB，与头显的 63 维 FEA 融合，识别此刻的情绪。',
+    dirMainItems: ['下半脸图像 + FEA 多模态融合', '合成数据冷启动 → 真实微调', '产出：可插拔的实时 FER 模型'],
+    dirSideTag: 'SIDE LINE · 预测未来',
+    dirSideTitle: '纯 FEA 时序闭环预测',
+    dirSideDesc: '取消相机，头显高帧率采 FEA + 眼动 + 自评，用时序模型预测未来情绪走向。',
+    dirSideItems: ['纯 FEA 时间序列，不依赖任何图像', '过去数秒 → 预测未来约 3 秒', '产出：闭环驱动下一张刺激'],
+    dirShared: '共享底座：ComfyUI 生成 360° 全景刺激诱导表情 · FastAPI 后端 · 固定 7 类情绪（angry / disgust / fear / happy / neutral / sad / surprise）',
+
+    mainNum: '04',
+    mainEyebrow: '主线 · 图像式 FER',
+    mainTitle: '数据三阶段递进，三条模型基线对照',
+    mainStages: [
+      { k: '阶段 1 · 合成', t: 'ComfyUI 生成戴 VR 人像', d: '+ VRMask 合成遮挡，冷启动不依赖真人' },
+      { k: '阶段 2 · 真实', t: 'Quest Pro 采集', d: '下半脸图像 + 63 维 FEA + 情绪标签' },
+      { k: '阶段 3 · 混合', t: '合成预训练 + 真实微调', d: '评测集固定为真实 VR 遮挡' },
+    ],
+    mainBaselines: [
+      { k: 'BASELINE ①', h: '图像式', p: '下半脸 RGB 224×224，复用 efficientnet_b2 / 自研 vr_cnn。' },
+      { k: 'BASELINE ②', h: '混合形状式', p: '63 维 FEA → MLP，含被遮挡区信号，Quest Pro 独有。' },
+      { k: 'BASELINE ③', h: '融合', p: '图像 + FEA 后期融合，验证多模态是否超越单模态。' },
+    ],
+
+    sideNum: '05',
+    sideEyebrow: '支线 · FEA 时序闭环',
+    sideTitle: '从「识别现在」到「预测未来」的实时闭环',
+    sideNodes: [
+      { k: '生成', t: 'ComfyUI 360° 全景' },
+      { k: '呈现', t: '后端实时下发头显 Skybox' },
+      { k: '采集', t: '高帧率 FEA / 眼动 / 事件 / 自评', d: '每张图后 7 类 + SAM 愉悦-唤醒' },
+      { k: '预测', t: '/api/predict', d: '过去数秒 → 未来约 3s 走向' },
+    ],
+    sideLoop: '闭环反馈：预测结果驱动「选/生成下一张刺激」，再次下发头显 →',
+    sideCards: [
+      { k: 'DATA FORMAT', h: '时间轴数据集（新格式）', p: '按 <subject>/<session>/ 分文件：fea · gaze · stimulus · selfreport · microevents，四路信号统一时间戳落盘。' },
+      { k: 'MODEL', h: '时序预测模型', p: 'GRU / TCN 序列基线；另有规则式基线免训练即可跑，响应结构与单帧识别同构，前端复用同一套映射。' },
+    ],
+
+    sysNum: '06',
+    sysEyebrow: '系统与技术实现 · System',
+    sysTitle: '一套已跑通的端到端平台',
+    sysLead: '从浏览器实时识别、到浏览器内训练、到头显采集，全链已成形；离线部分全链冒烟通过。',
+    sysRows: [
+      { k: '前端', t: 'Vue 3 SPA · 中／日双语', sub: '四个页面：实时情绪识别 · 模型训练 · 刺激图生成 · ComfyUI 客户端。摄像头逐帧经 WebSocket 上传。' },
+      { k: '后端', t: 'FastAPI（:9501）· GPU 推理', sub: 'MTCNN 人脸检测 + HSEmotion（EfficientNet-B2）情绪分类，线程池推理不阻塞事件循环。' },
+      { k: '模型', t: '可插拔模型注册表', sub: '浏览器内训练的自定义模型与内置模型接口兼容，运行时热插拔用于推理。' },
+      { k: '采集', t: 'Quest Pro + Unity（Meta XR）', sub: 'USB adb 反向隧道免 WiFi 直连后端；头显视角回传辅助远程调试。' },
+      { k: '生成', t: 'ComfyUI 批量数据生成', sub: '按情绪批量产出表情图 / 360° 全景，直接写入 ImageFolder 训练目录。' },
+    ],
+
+    objNum: '07',
+    objEyebrow: '研究目的 · Objectives',
+    objTitle: '四个研究问题，一个总目标',
+    objRqs: [
+      { n: 'RQ1', p: '遮挡下能否达到可用的实时 FER 精度？' },
+      { n: 'RQ2', p: '含被遮挡区信号的 63 维 FEA，相比下半脸图像贡献多少？' },
+      { n: 'RQ3', p: '图像 + FEA 多模态融合能否超过任一单模态？' },
+      { n: 'RQ4', p: '高帧率 FEA 时序能否提前预测情绪走向，而非只识别当前？' },
+    ],
+    objGoal: '总目标：构建一套「VR 遮挡 → 实时识别 + 中时预测」的开源情感计算平台与配套数据集，把「看不见上半脸」从障碍变成可研究、可复现的能力。',
+
+    appNum: '08',
+    appEyebrow: '应用领域 · Applications',
+    appTitle: '这项研究今后能用在哪里',
+    appItems: [
+      { n: '01', h: 'VR/AR 社交与虚拟化身', p: '用真实表情驱动 avatar，提升虚拟社交的临场感与可信度。' },
+      { n: '02', h: '沉浸式心理治疗 / 暴露疗法', p: '实时监测焦虑、恐惧等情绪并自适应干预，量化疗程反应。' },
+      { n: '03', h: '情感自适应内容', p: '游戏 / 影视按预测的情绪走向调整剧情、难度与节奏。' },
+      { n: '04', h: '沉浸式教育与培训', p: '感知学习者情绪状态，实现自适应教学与注意力反馈。' },
+      { n: '05', h: '人因与 UX 研究', p: '为沉浸式体验提供客观、连续的情绪评估指标。' },
+      { n: '06', h: '医疗康复与通用情感计算', p: '情感障碍评估、自闭症情绪训练，并可迁移到驾驶 / 操作员状态监测。' },
+    ],
+
+    staNum: '09',
+    staEyebrow: '进度与里程碑 · Status',
+    staTitle: '软件平台已成形，进入真机采集阶段',
+    staDoneLabel: '已完成',
+    staDoneTag: '离线全链冒烟通过',
+    staDone: [
+      '合成数据生成 + 图像式训练器（VRMask 遮挡增强）',
+      'FEA 规则式基线（免训练可跑）',
+      '时序采集 / 在线预测 / 数据管线后端',
+      'Unity 采集脚本 · USB 直连 · 头显视角回传',
+    ],
+    staTodoLabel: '待真机联调',
+    staTodoTag: 'M3',
+    staTodo: [
+      'Quest Pro 高帧率四路采集 ↔ 后端整链',
+      '同步偏移对齐（< 1 帧）与完整回放',
+      '预测闭环反馈驱动刺激',
+      '正式数据采集与 RQ1–RQ4 对照实验',
+    ],
+
+    sumNum: '10',
+    sumEyebrow: '总结 · Summary',
+    sumTitle: '小结',
+    sumPoints: [
+      '面向 VR 遮挡这一真实痛点，提出图像式识别与纯 FEA 时序预测两条互补路线。',
+      '已建成从生成、采集到识别／预测的端到端软件平台与离线数据管线，正进入真机采集阶段。',
+      '目标是开源一套「识别当前 + 预测未来」的 VR 情感计算基础设施，服务社交、治疗、教育等多个领域。',
+    ],
   },
 
   train: {
@@ -176,6 +313,9 @@ export default {
     hsReady: '已连接 · USB 隧道就绪',
     hsAppRunning: '· 应用运行中',
     hsHint: '数据线连头显 → 点「连接头显」→ 头显里后端地址填 http://127.0.0.1:9501',
+    hsViewShow: '👁 查看头显视角',
+    hsViewHide: '收起头显视角',
+    hsViewWaiting: '等待头显画面…（需头显里应用正在运行）',
     emotion: '目标情绪',
     scene: '场景提示词（可编辑）',
     pick: '🎲 换一个场景',
