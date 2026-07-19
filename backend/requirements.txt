@@ -10,3 +10,5 @@ facenet-pytorch==2.6.0
 hsemotion==0.3.0
 timm==0.9.16
 Pillow>=10.0.0
+# 「情感偏好生成」页的 Postgres + pgvector 存储（需服务端已建库并启用 vector 扩展）
+psycopg[binary]>=3.1

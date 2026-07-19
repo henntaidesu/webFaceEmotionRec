@@ -16,13 +16,16 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
+from .. import settings_store
 from ..use_capture import session_store
-from ..use_model import model_registry
+from ..use_model import labels, model_registry
 from ..use_model.emotion import analyze_frame
 from ..use_model.fea_emotion import classify_fea
 from ..use_model.models import get_models
 from ..use_predict import predictor
 from ..use_eval import eval_store, evaluation
+from ..use_llm import deepseek
+from ..use_store import pg_store
 from ..use_train import train_store, training
 from . import headset
 from .image_utils import decode_base64_image
@@ -366,19 +369,48 @@ async def headset_view_get():
 # 机内摄像头不开放原始图像，头显侧（Unity/Meta XR Movement SDK）把 63 维 FEA
 # 推到这里；后端分类后，前端「微情感生成」页轮询 /api/fea/latest 取用。
 _latest_fea: dict = {"data": None}
+# 「情感偏好生成」页正在采集的活动会话；非空时每帧 FEA 同时写入 PG 时间轴。
+_affect_active: dict = {"session_id": None, "subject_id": None}
+
+
+def _emotions_en(result: dict) -> dict:
+    """把 classify_fea 的中文情绪字典转成英文键（供 PG 存储/相似度检索）。"""
+    zh = result.get("emotions") or {}
+    return {en: zh.get(labels.to_zh(en), 0.0) for en in config.TRAIN_CLASSES}
 
 
 @app.post("/api/fea")
 async def fea_ingest(body: dict = Body(default=None)):
-    """接收 Quest Pro 的一帧 FEA：{"blendshapes":[63], "timestamp_ms"?:int}。"""
-    bs = (body or {}).get("blendshapes")
+    """接收 Quest Pro 的一帧 FEA：{"blendshapes":[63], "timestamp_ms"?:int}。
+
+    若「情感偏好生成」页有活动采集会话，则该帧（63 维 blendshape + 情绪 + 时间戳）
+    同时写入 Postgres 时间轴，供后续训练情绪预测模型。
+    """
+    body = body or {}
+    bs = body.get("blendshapes")
     try:
         result = classify_fea(bs)
     except (ValueError, TypeError) as e:
         return JSONResponse(status_code=400, content={"success": False, "error": str(e)})
+    ts = int(body.get("timestamp_ms") or time.time() * 1000)
     result["success"] = True
-    result["timestamp_ms"] = int((body or {}).get("timestamp_ms") or time.time() * 1000)
+    result["timestamp_ms"] = ts
     _latest_fea["data"] = result
+
+    sid = _affect_active["session_id"]
+    if sid:
+        row = {
+            "ts_ms": ts,
+            "blendshapes": bs,
+            "emotions": _emotions_en(result),
+            "dominant": result.get("dominant_en"),
+            "source": "quest_fea",
+        }
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(executor, lambda: pg_store.insert_fea(sid, [row]))
+        except RuntimeError as e:
+            logger.warning("FEA 写入 PG 失败: %s", e)
     return result
 
 
@@ -453,6 +485,209 @@ async def predict_endpoint(body: dict = Body(default=None)):
     return await loop.run_in_executor(
         executor, lambda: predictor.predict(body or {}, models.device)
     )
+
+
+# ── 系统设置（根目录 conf.ini 持久化，供「系统设置」页读写）─────────────
+@app.get("/api/settings")
+async def settings_get():
+    """返回全部系统设置 {section: {key: value}}（供设置页回填表单）。"""
+    return settings_store.all_settings()
+
+
+@app.post("/api/settings")
+async def settings_update(body: dict = Body(default=None)):
+    """按 section 更新设置并落盘 conf.ini。请求体 {section: {key: value, ...}, ...}。"""
+    body = body or {}
+    try:
+        for section, values in body.items():
+            if isinstance(values, dict):
+                settings_store.update_section(section, values)
+    except KeyError as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": f"未知设置分组 {e}"})
+    except (ValueError, TypeError) as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": f"设置值非法: {e}"})
+    return {"ok": True, "settings": settings_store.all_settings()}
+
+
+@app.post("/api/settings/deepseek/test")
+async def settings_deepseek_test():
+    """用当前保存的 DeepSeek 设置做一次最小连通性测试。"""
+    if not deepseek.is_configured():
+        return JSONResponse(status_code=503, content={"ok": False, "error": "DEEPSEEK_API_KEY 未配置"})
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, deepseek.test_connection)
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, **result}
+
+
+# ── DeepSeek：情感变化 → 图像生成提示词 ─────────────────────────────
+# 前端「微情感生成」页把最近的情感变化轨迹推来，DeepSeek 据此生成图像提示词，
+# 再喂给 ComfyUI 生成图（见 use_llm/deepseek.py）。
+@app.get("/api/prompt/status")
+async def prompt_status():
+    """前端探测该功能是否可用（是否配置了 DEEPSEEK_API_KEY）。"""
+    return {"configured": deepseek.is_configured(), "model": config.DEEPSEEK_MODEL}
+
+
+@app.post("/api/prompt/generate")
+async def prompt_generate(body: dict = Body(default=None)):
+    """输入情感变化轨迹 → 输出 {positive, negative, scene, reasoning}。
+
+    请求体：{"trajectory":[{"dom","ago_s","probs"}...], "current":{"dominant_en","probs"}, "locale"?}。
+    """
+    body = body or {}
+    if not deepseek.is_configured():
+        return JSONResponse(status_code=503, content={"ok": False, "error": "DEEPSEEK_API_KEY 未配置"})
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: deepseek.generate_image_prompt(
+                body.get("trajectory") or [],
+                body.get("current") or {},
+                body.get("locale") or "zh",
+            ),
+        )
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, **result}
+
+
+# ── Postgres + pgvector 连通性测试（系统设置页「测试」按钮）─────────────
+@app.post("/api/settings/postgres/test")
+async def settings_postgres_test():
+    if not pg_store.is_configured():
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Postgres DSN 未配置"})
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, pg_store.test_connection)
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, **result}
+
+
+# ── 情感偏好生成闭环：采集会话 + FEA 时间轴 + 生成图偏好（Postgres/pgvector）──
+# 前端「情感偏好生成」页：点开始→建会话并开始采集 FEA 时间轴；每生成一张图，
+# 测量随后的情绪反应判定是否「喜欢」，连同生成时的情绪情境向量写入 PG；据此
+# 相似度检索用户在相似情绪下喜欢过的图，闭环推动后续生成。
+@app.get("/api/affect/status")
+async def affect_status():
+    """前端探测：PG 是否配置、DeepSeek 是否配置、当前是否有活动采集会话。"""
+    return {
+        "pg_configured": pg_store.is_configured(),
+        "deepseek_configured": deepseek.is_configured(),
+        "active_session": _affect_active["session_id"],
+        "reaction_window_s": config.AFFECT_REACTION_WINDOW_S,
+        "like_threshold": config.AFFECT_LIKE_THRESHOLD,
+        "cooldown_s": config.AFFECT_COOLDOWN_S,
+    }
+
+
+def _require_pg():
+    if not pg_store.is_configured():
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Postgres DSN 未配置"})
+    return None
+
+
+@app.post("/api/affect/session/start")
+async def affect_session_start(body: dict = Body(default=None)):
+    """建立采集会话并置为活动。请求体 {"subject_id"?, "meta"?}。"""
+    if (err := _require_pg()) is not None:
+        return err
+    body = body or {}
+    loop = asyncio.get_event_loop()
+    try:
+        r = await loop.run_in_executor(
+            executor, lambda: pg_store.start_session(str(body.get("subject_id") or "anon"), body.get("meta")))
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    _affect_active["session_id"] = r["session_id"]
+    _affect_active["subject_id"] = str(body.get("subject_id") or "anon")
+    return r
+
+
+@app.post("/api/affect/session/stop")
+async def affect_session_stop(body: dict = Body(default=None)):
+    """收尾采集会话，清空活动会话。请求体 {"session_id"?}（缺省用当前活动会话）。"""
+    if (err := _require_pg()) is not None:
+        return err
+    sid = (body or {}).get("session_id") or _affect_active["session_id"]
+    if not sid:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "无活动会话"})
+    loop = asyncio.get_event_loop()
+    try:
+        r = await loop.run_in_executor(executor, lambda: pg_store.stop_session(sid))
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    if _affect_active["session_id"] == sid:
+        _affect_active["session_id"] = None
+        _affect_active["subject_id"] = None
+    return r
+
+
+@app.post("/api/affect/sample")
+async def affect_sample(body: dict = Body(default=None)):
+    """写一批 FEA/情绪时间轴样本（2D 摄像头模式下由前端推送；头显模式走 /api/fea 自动写）。
+    请求体 {"session_id"?, "rows":[{ts_ms, blendshapes?, emotions?, dominant?, source?}]}。"""
+    if (err := _require_pg()) is not None:
+        return err
+    body = body or {}
+    sid = body.get("session_id") or _affect_active["session_id"]
+    if not sid:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "无活动会话"})
+    loop = asyncio.get_event_loop()
+    try:
+        n = await loop.run_in_executor(executor, lambda: pg_store.insert_fea(sid, body.get("rows") or []))
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, "written": n}
+
+
+@app.post("/api/affect/image")
+async def affect_image(body: dict = Body(default=None)):
+    """写一条生成图偏好记录（含情绪情境向量、提示词、反应、是否喜欢）。"""
+    if (err := _require_pg()) is not None:
+        return err
+    body = body or {}
+    if _affect_active["session_id"] and not body.get("session_id"):
+        body["session_id"] = _affect_active["session_id"]
+    loop = asyncio.get_event_loop()
+    try:
+        r = await loop.run_in_executor(executor, lambda: pg_store.insert_image(body))
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return r
+
+
+@app.post("/api/affect/recommend")
+async def affect_recommend(body: dict = Body(default=None)):
+    """按当前情绪情境检索用户喜欢过的相似图。请求体 {"emotions":{en:值}, "k"?, "subject_id"?}。"""
+    if (err := _require_pg()) is not None:
+        return err
+    body = body or {}
+    loop = asyncio.get_event_loop()
+    try:
+        r = await loop.run_in_executor(
+            executor,
+            lambda: pg_store.recommend(body.get("emotions"), int(body.get("k") or 5), body.get("subject_id")),
+        )
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, **r}
+
+
+@app.get("/api/affect/sessions")
+async def affect_sessions():
+    if (err := _require_pg()) is not None:
+        return err
+    loop = asyncio.get_event_loop()
+    try:
+        r = await loop.run_in_executor(executor, pg_store.list_sessions)
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return r
 
 
 @app.websocket("/ws/emotion")

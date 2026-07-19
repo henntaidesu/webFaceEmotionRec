@@ -158,6 +158,9 @@ backend/checkpoints/
 # 网页生成的刺激图（image/<emotion>/<时间戳>.png）
 image/
 
+# 系统设置（含 DeepSeek API 密钥，勿提交）；格式见 conf.ini.example，首次启动自动生成
+conf.ini
+
 # Datasets (downloaded locally, do not commit — see DataSet/prepare_fer2013.py)
 DataSet/**
 !DataSet/*.py

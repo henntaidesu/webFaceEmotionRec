@@ -31,6 +31,17 @@ CUDA_DEVICE_INDEX = int(os.getenv("CUDA_DEVICE_INDEX", "0"))
 # enet_b2_7：EfficientNet-B2，7 类情感（不含 contempt，与 DeepFace 标签一致）
 EMOTION_MODEL = os.getenv("EMOTION_MODEL", "enet_b2_7")
 
+# ── DeepSeek LLM（情感变化 → 图像生成提示词）─────────────────────────
+# 把用户表情/情感随时间的「变化轨迹」发给 DeepSeek，由其生成对应的图像生成
+# 提示词（见 use_llm/deepseek.py）。DeepSeek 为 OpenAI 兼容接口。
+# 需设置环境变量 DEEPSEEK_API_KEY 才启用；未配置时 /api/prompt/* 报未配置。
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", "30"))
+# 创意类生成，温度偏高（DeepSeek 建议创意写作 ~1.5，取 1.3 兼顾稳定）
+DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "1.3"))
+
 # ── MTCNN 检测参数 ────────────────────────────────────────────────
 MIN_FACE_SIZE = 20
 MTCNN_THRESHOLDS = [0.6, 0.7, 0.7]
@@ -103,3 +114,23 @@ PREDICT_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 # 预测默认：用过去 window 秒序列预测未来 horizon 秒（中时走向）
 PREDICT_WINDOW_S = float(os.getenv("PREDICT_WINDOW_S", "5"))
 PREDICT_HORIZON_S = float(os.getenv("PREDICT_HORIZON_S", "3"))
+
+# ── Postgres + pgvector（「情感偏好生成」页的时间轴/FEA 存储）─────────────
+# 「情感偏好生成」页把用户 FEA 时序（含时间戳）与生成图的情绪情境向量写入
+# Postgres（启用 pgvector 扩展），供后续训练情绪预测模型 + 偏好相似度检索。
+# 连接参数实时取自 settings_store（conf.ini [postgres]），系统设置页改完即时生效。
+# host 留空则该页存储功能未启用（/api/affect/* 报未配置）。
+# 采用对象模式的 db_manager（backend/src/db_manager）：自动建库、建表、改表结构。
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+POSTGRES_DATABASE = os.getenv("POSTGRES_DATABASE", "webfaceemotionrec")
+
+# ── 情感偏好生成闭环默认参数 ──────────────────────────────────────────
+# 生成一张图后，测量随后 reaction_window_s 秒内的 FEA 情绪反应；正向情绪
+# （happy/surprise 减去 sad/angry/fear/disgust）均值 ≥ like_threshold 记为「喜欢」。
+AFFECT_REACTION_WINDOW_S = float(os.getenv("AFFECT_REACTION_WINDOW_S", "6"))
+AFFECT_LIKE_THRESHOLD = float(os.getenv("AFFECT_LIKE_THRESHOLD", "0.15"))
+# 两次自动生成之间的冷却秒数（防抖）
+AFFECT_COOLDOWN_S = float(os.getenv("AFFECT_COOLDOWN_S", "10"))

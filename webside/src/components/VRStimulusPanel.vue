@@ -15,8 +15,10 @@
       </div>
     </div>
 
-    <!-- ── 主体滚动区 ── -->
+    <!-- ── 主体：左配置 / 右头显视角 ── -->
     <div class="comfy-body">
+      <!-- 左侧：配置区（滚动） -->
+      <div class="config-col">
       <!-- 离线提示 -->
       <div v-if="!online" class="offline-box">
         <span class="offline-icon">⚡</span>
@@ -40,17 +42,6 @@
           </button>
         </div>
         <p class="hs-hint">{{ locale.stimulus.hsHint }}</p>
-
-        <!-- ── 头显用户视角预览（头显回传当前画面）── -->
-        <div class="hs-view">
-          <button class="hs-btn hs-ghost" @click="toggleHeadsetView">
-            {{ showHeadsetView ? locale.stimulus.hsViewHide : locale.stimulus.hsViewShow }}
-          </button>
-          <div v-if="showHeadsetView" class="hs-view-box">
-            <img v-if="headsetViewSrc" :src="headsetViewSrc" class="hs-view-img" alt="headset view" />
-            <span v-else class="hs-view-waiting">{{ locale.stimulus.hsViewWaiting }}</span>
-          </div>
-        </div>
 
         <!-- 目标情绪 -->
         <div class="field">
@@ -240,6 +231,16 @@
           </div>
         </div>
       </template>
+      </div>
+
+      <!-- 右侧：头显视角（一直显示，不折叠） -->
+      <div class="view-col">
+        <div class="view-col-title">{{ locale.stimulus.hsViewTitle }}</div>
+        <div class="hs-view-box">
+          <img v-if="headsetViewSrc" :src="headsetViewSrc" class="hs-view-img" alt="headset view" />
+          <span v-else class="hs-view-waiting">{{ locale.stimulus.hsViewWaiting }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- 历史图片弹窗（从磁盘 image/ 按需读取）-->
@@ -512,28 +513,15 @@ async function doConnectHeadset() {
   }
 }
 
-// ── 头显用户视角预览（轮询 /api/headset/view 拉最新一帧）──
-const showHeadsetView = ref(false)
+// ── 头显用户视角预览（常驻右栏，持续轮询 /api/headset/view 拉最新一帧）──
 const headsetViewSrc = ref('')
 let headsetViewTimer = null
 
 async function pollHeadsetView() {
   const blob = await fetchHeadsetView().catch(() => null)
-  if (!blob || !showHeadsetView.value) return
+  if (!blob) return
   if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
   headsetViewSrc.value = URL.createObjectURL(blob)
-}
-
-function toggleHeadsetView() {
-  showHeadsetView.value = !showHeadsetView.value
-  if (showHeadsetView.value) {
-    headsetViewTimer = setInterval(pollHeadsetView, 150)
-  } else {
-    if (headsetViewTimer) clearInterval(headsetViewTimer)
-    headsetViewTimer = null
-    if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
-    headsetViewSrc.value = ''
-  }
 }
 
 onUnmounted(() => {
@@ -909,6 +897,7 @@ onMounted(() => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
   refreshHeadset()
+  headsetViewTimer = setInterval(pollHeadsetView, 150)
 })
 onUnmounted(() => {
   clearInterval(connTimer)
@@ -969,10 +958,28 @@ onUnmounted(() => {
 .icon-btn:hover { border-color: #2563eb; color: #2563eb; }
 
 .comfy-body {
-  flex: 1; overflow-y: auto;
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; align-items: stretch;
+}
+
+/* 左侧配置区：独立滚动 */
+.config-col {
+  flex: 1 1 0; min-width: 0;
+  overflow-y: auto;
   padding: 14px 16px 20px;
   display: flex; flex-direction: column; gap: 10px;
 }
+
+/* 右侧头显视角：常驻，一直显示 */
+.view-col {
+  flex: 1 1 0; min-width: 0;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto;
+}
+.view-col-title { font-size: 0.82rem; font-weight: 700; color: var(--color-text); letter-spacing: 0.04em; }
 
 .panel-desc {
   font-size: 0.75rem; line-height: 1.5;
@@ -1227,7 +1234,6 @@ onUnmounted(() => {
 .hs-btn:disabled { opacity: 0.5; cursor: default; }
 .hs-btn.hs-ghost { margin-left: 0; background: rgba(255, 255, 255, 0.1); }
 .hs-hint { font-size: 0.78rem; color: rgba(255, 255, 255, 0.45); margin: 0 0 10px; }
-.hs-view { margin: 0 0 12px; }
 .hs-view-box {
   margin-top: 8px;
   aspect-ratio: 16 / 9;

@@ -35,6 +35,10 @@
             </RouterLink>
           </div>
         </div>
+
+        <RouterLink :to="`${prefix}/settings`" class="nav-link">
+          {{ currentLocale.nav.settings }}
+        </RouterLink>
       </nav>
 
       <RouterLink :to="langSwitchPath" class="lang-switch">
@@ -76,9 +80,8 @@ const navItems = computed(() => [
 const comfyGroup = computed(() => ({
   label: currentLocale.value.nav.comfyui,
   children: [
-    { to: `${prefix.value}/comfyui`, label: currentLocale.value.nav.comfyExpression },
     { to: `${prefix.value}/comfyui/stimulus`, label: currentLocale.value.nav.comfyStimulus },
-    { to: `${prefix.value}/comfyui/affective`, label: currentLocale.value.nav.comfyAffective },
+    { to: `${prefix.value}/comfyui/affect`, label: currentLocale.value.nav.comfyAffect },
   ],
 }))
 
