@@ -325,34 +325,47 @@ async function flushWebcamSamples() {
 }
 
 // ── 开始 / 停止 ──
+let starting = false          // 防 startSession await 期间重复点击起两个会话/摄像头
+let reactionTimer = null      // measureReaction 的 setTimeout id，停止/卸载时清
+let activeGenWs = null        // 生成进行中的进度 WS，卸载时关
+
 async function toggleRun() {
   if (running.value) { await stopRun(); return }
   await startRun()
 }
 
 async function startRun() {
-  statusMsg.value = ''
+  if (starting || running.value) return
+  starting = true
   try {
-    const r = await startSession(subjectId.value || 'anon', { source: source.value })
+    statusMsg.value = ''
+    let r
+    try {
+      r = await startSession(subjectId.value || 'anon', { source: source.value })
+    } catch (e) {
+      setStatus(`${props.locale.affect.error}: ${e.message}`, 'msg-error'); return
+    }
     sessionId.value = r.session_id
-  } catch (e) {
-    setStatus(`${props.locale.affect.error}: ${e.message}`, 'msg-error'); return
+    running.value = true
+    feaCount.value = 0
+    trajectory.length = 0
+    if (source.value === 'webcam') {
+      try { await startWebcam() } catch (e) { setStatus(`${props.locale.cameraErrorPrefix || ''}${e.message}`, 'msg-error') }
+      sampleTimer = setInterval(flushWebcamSamples, 2000)
+    } else {
+      feaTimer = setInterval(pollFea, FEA_POLL_MS)
+    }
+    setStatus(props.locale.affect.started, 'msg-ok')
+  } finally {
+    starting = false
   }
-  running.value = true
-  feaCount.value = 0
-  trajectory.length = 0
-  if (source.value === 'webcam') {
-    try { await startWebcam() } catch (e) { setStatus(`${props.locale.cameraErrorPrefix || ''}${e.message}`, 'msg-error') }
-    sampleTimer = setInterval(flushWebcamSamples, 2000)
-  } else {
-    feaTimer = setInterval(pollFea, FEA_POLL_MS)
-  }
-  setStatus(props.locale.affect.started, 'msg-ok')
 }
 
 async function stopRun() {
   if (feaTimer) { clearInterval(feaTimer); feaTimer = null }
   if (sampleTimer) { clearInterval(sampleTimer); sampleTimer = null }
+  if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null }
+  if (reaction.state === 'measuring') reaction.state = ''
   await flushWebcamSamples()
   stopWebcam()
   running.value = false
@@ -452,7 +465,7 @@ async function generate(trigger) {
   try {
     const { positive, negative, scene, reasoning } = await resolvePrompt(dom)
     const workflow = await buildWorkflowFor(dom, positive, negative)
-    ws = openProgressWS(clientId)
+    ws = openProgressWS(clientId); activeGenWs = ws
     const { prompt_id } = await queuePrompt(clientId, workflow)
     const urls = await waitForImages(ws, prompt_id)
     const url = urls[0] || ''
@@ -473,6 +486,7 @@ async function generate(trigger) {
   } finally {
     generating.value = false
     if (ws) ws.close()
+    activeGenWs = null
   }
 }
 
@@ -480,7 +494,9 @@ async function generate(trigger) {
 function measureReaction({ dom, contextProbs, positive, negative, scene, reasoning, url }) {
   const onset = Date.now()
   reaction.state = 'measuring'; reaction.samples = []; reaction.score = 0
-  setTimeout(async () => {
+  if (reactionTimer) clearTimeout(reactionTimer)
+  reactionTimer = setTimeout(async () => {
+    reactionTimer = null
     const arr = reaction.samples
     const score = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : positiveScore(contextProbs)
     const liked = score >= likeThreshold.value
@@ -516,7 +532,16 @@ function waitForImages(socket, promptId) {
       }
     }
     socket.addEventListener('message', onMsg)
-    poll = setInterval(async () => { try { const h = await getHistory(promptId); if (h[promptId]?.outputs) done() } catch { /* 继续 */ } }, 3000)
+    let pollN = 0
+    poll = setInterval(async () => {
+      if (++pollN > 200) {          // ~10min 上限：Comfy 崩/节点错时不再无限轮询
+        if (settled) return
+        settled = true
+        socket.removeEventListener('message', onMsg); if (poll) clearInterval(poll)
+        reject(new Error('轮询超时：ComfyUI 未返回结果')); return
+      }
+      try { const h = await getHistory(promptId); if (h[promptId]?.outputs) done() } catch { /* 继续 */ }
+    }, 3000)
   })
 }
 async function collectImages(promptId) {
@@ -535,6 +560,8 @@ onUnmounted(() => {
   clearInterval(connTimer)
   if (feaTimer) clearInterval(feaTimer)
   if (sampleTimer) clearInterval(sampleTimer)
+  if (reactionTimer) { clearTimeout(reactionTimer); reactionTimer = null }
+  if (activeGenWs) { activeGenWs.close(); activeGenWs = null }
   stopWebcam()
 })
 </script>

@@ -16,13 +16,15 @@ import threading
 import numpy as np
 
 from .. import config
+from ..safe_path import is_safe_id
 
 logger = logging.getLogger(__name__)
 
 BUILTIN_ID = "hsemotion"
 BUILTIN_NAME = "HSEmotion（内置 enet_b2_7）"
 
-_LOCK = threading.Lock()
+_LOCK = threading.Lock()            # 保护 _active_id
+_CACHE_LOCK = threading.Lock()      # 保护 _cache 的 check-then-set，防并发重复加载
 _active_id = BUILTIN_ID
 _cache: dict = {}  # id -> TrainedEmotionRecognizer
 
@@ -118,16 +120,19 @@ def set_active(model_id: str, models) -> dict:
             _active_id = BUILTIN_ID
         return {"ok": True, "active": _active_id}
 
+    if not is_safe_id(model_id):     # 阻断路径穿越（../ 等）→ 视为不存在
+        raise KeyError(model_id)
     sidecar = _sidecar_path(model_id)
     ckpt = config.CHECKPOINT_DIR / f"{model_id}.pt"
     if not (os.path.exists(sidecar) and ckpt.exists()):
         raise KeyError(model_id)
 
-    if model_id not in _cache:
-        try:
-            _cache[model_id] = TrainedEmotionRecognizer(str(ckpt), models.device)
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(f"加载模型失败: {e}") from e
+    with _CACHE_LOCK:
+        if model_id not in _cache:
+            try:
+                _cache[model_id] = TrainedEmotionRecognizer(str(ckpt), models.device)
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError(f"加载模型失败: {e}") from e
     with _LOCK:
         _active_id = model_id
     logger.info("已切换推理模型 → %s", model_id)
@@ -139,6 +144,8 @@ def delete_model(model_id: str) -> dict:
     global _active_id
     if model_id == BUILTIN_ID:
         raise ValueError("内置模型不可删除")
+    if not is_safe_id(model_id):     # 阻断路径穿越 → 视为不存在
+        raise KeyError(model_id)
     sidecar = _sidecar_path(model_id)
     ckpt = config.CHECKPOINT_DIR / f"{model_id}.pt"
     if not os.path.exists(sidecar):
@@ -146,7 +153,8 @@ def delete_model(model_id: str) -> dict:
     for p in (sidecar, str(ckpt)):
         if os.path.exists(p):
             os.remove(p)
-    _cache.pop(model_id, None)
+    with _CACHE_LOCK:
+        _cache.pop(model_id, None)
     with _LOCK:
         if _active_id == model_id:
             _active_id = BUILTIN_ID

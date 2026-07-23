@@ -32,6 +32,11 @@ export async function generatePrompt(trajectory, current, locale = 'zh') {
   return postJson('/api/prompt/generate', { trajectory, current, locale })
 }
 
+// DeepSeek（场景驱动，刺激页闭环用）：目标情绪 + 基础场景 + 强度指令 → {positive,negative,scene,reasoning}
+export async function generateScenePrompt(emotion, scene, directive, locale = 'zh') {
+  return postJson('/api/prompt/scene', { emotion, scene, directive, locale })
+}
+
 // 采集会话生命周期
 export function startSession(subjectId, meta) {
   return postJson('/api/affect/session/start', { subject_id: subjectId, meta })

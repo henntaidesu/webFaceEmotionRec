@@ -13,6 +13,7 @@ import os
 import shutil
 
 from .. import config
+from ..safe_path import is_safe_id
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,9 @@ def get_eval(eval_id: str) -> dict | None:
 
 
 def delete_eval(eval_id: str) -> bool:
-    """删除一次评测记录目录。不存在返回 False。"""
+    """删除一次评测记录目录。不存在或 id 非法返回 False。"""
+    if not is_safe_id(eval_id):      # 阻断路径穿越 → 防 rmtree 任意目录
+        return False
     d = _eval_dir(eval_id)
     if not d.is_dir():
         return False

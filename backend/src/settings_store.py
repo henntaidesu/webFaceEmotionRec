@@ -32,7 +32,8 @@ _SCHEMA = {
 }
 
 _lock = threading.Lock()
-_parser = configparser.ConfigParser()
+# interpolation=None：禁用 % 插值，否则含 % 的密码/API key 读取时抛 InterpolationSyntaxError
+_parser = configparser.ConfigParser(interpolation=None)
 _loaded = False
 
 

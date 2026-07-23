@@ -127,9 +127,16 @@ def start_training(raw_params: dict) -> dict:
     """启动训练。已有任务在跑则抛 RuntimeError。"""
     global _THREAD
     with _LOCK:
-        if _JOB["status"] in ("running", "stopping"):
+        if _JOB["status"] in ("running", "stopping", "starting"):
             raise RuntimeError("已有训练任务正在运行")
-    params = _parse_params(raw_params)
+        _prev_status = _JOB["status"]
+        _JOB["status"] = "starting"     # 占位，防两个并发 start 都通过检查各起一个线程
+    try:
+        params = _parse_params(raw_params)
+    except Exception:
+        with _LOCK:
+            _JOB["status"] = _prev_status
+        raise
 
     # 每次训练 = 一个独立保存的模型，生成唯一 id 与显示名
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -212,8 +219,8 @@ def _build_loaders(params):
             if os.path.isdir(d):
                 ds = datasets.ImageFolder(str(d), transform=tf)
                 # 强制类别顺序与 config.TRAIN_CLASSES 一致（各数据集已是字母序，故天然一致）
-                assert ds.classes == config.TRAIN_CLASSES, (
-                    f"{name}/{split} 类别顺序异常: {ds.classes}")
+                if ds.classes != config.TRAIN_CLASSES:      # 显式检查（assert 在 -O 下被跳过）
+                    raise RuntimeError(f"{name}/{split} 类别顺序异常: {ds.classes}")
                 parts.append(ds)
         if not parts:
             raise RuntimeError(f"所选数据集缺少 {split} 划分")
@@ -395,7 +402,7 @@ def _train_loop(params: dict) -> None:
                     "ckpt": f"{params['model_id']}.pt",
                 })
                 _update(best_f1=round(best_f1, 4), ckpt_path=ckpt_path)
-                _log(f"  ✓ 保存最佳模型 macroF1={va_f1:.3f}")
+                _log(f"  [best] 保存最佳模型 macroF1={va_f1:.3f}")
 
         if _STOP.is_set():
             _update(status="stopped")

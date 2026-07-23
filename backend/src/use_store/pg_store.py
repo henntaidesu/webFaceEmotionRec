@@ -6,6 +6,8 @@ Postgres 连接参数取自 settings_store（conf.ini [postgres]），系统设�
 
 is_configured / 连接失败 / 未配置 一律抛 RuntimeError，由路由层转 HTTP 错误。
 """
+import logging
+import threading
 import time
 
 from .. import config
@@ -20,7 +22,9 @@ from ..db_manager import (
 FEA_DIM = config.FEA_DIM
 EMOTION_ORDER = config.TRAIN_CLASSES  # angry disgust fear happy neutral sad surprise（7）
 
+logger = logging.getLogger(__name__)
 _initialized = False
+_init_lock = threading.Lock()   # 防并发首请求同时跑建库/建表 DDL
 
 
 def is_configured() -> bool:
@@ -32,9 +36,12 @@ def _ensure_init() -> None:
     global _initialized
     if _initialized:
         return
-    if not get_db_manager().initialize_database():
-        raise RuntimeError("数据库初始化失败（建库/建表未全部成功）")
-    _initialized = True
+    with _init_lock:
+        if _initialized:
+            return
+        if not get_db_manager().initialize_database():
+            raise RuntimeError("数据库初始化失败（建库/建表未全部成功）")
+        _initialized = True
 
 
 def test_connection() -> dict:
@@ -92,17 +99,22 @@ def insert_fea(session_id: str, rows: list) -> int:
     _ensure_init()
     now = int(time.time() * 1000)
     prepared = []
+    skipped = 0
     for r in rows or []:
         bs = r.get("blendshapes")
-        fea = bs if (bs is not None and len(bs) == FEA_DIM) else None
+        if bs is not None and len(bs) != FEA_DIM:
+            skipped += 1        # 错维 FEA：跳过而非静默写 NULL 损坏时间轴
+            continue
         prepared.append({
             "session_id": session_id,
             "ts_ms": int(r.get("ts_ms") or now),
-            "fea": fea,
+            "fea": bs,          # None（本行无 FEA）或已校验为 FEA_DIM 维
             "emotions": r.get("emotions"),
             "dominant": r.get("dominant"),
             "source": r.get("source"),
         })
+    if skipped:
+        logger.warning("insert_fea: 跳过 %d 行错误维度 FEA（期望 %d 维）", skipped, FEA_DIM)
     if not prepared:
         return 0
     return AffectFeaModel.insert_many(prepared)

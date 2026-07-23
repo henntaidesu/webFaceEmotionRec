@@ -66,12 +66,13 @@ def train_predict(dataset_dir: str, params: dict = None) -> dict:
         raise FileNotFoundError(f"缺 train.npz：{ddir}")
 
     input_dim = tr[0].shape[2]
-    epochs = int(params.get("epochs", 15))
+    epochs = max(1, int(params.get("epochs", 15)))     # 防 epochs<1 使 best_state 保持 None 存出空 checkpoint
     batch = int(params.get("batch_size", 64))
     lr = float(params.get("lr", 1e-3))
     hidden = int(params.get("hidden", 128))
     layers = int(params.get("layers", 1))
-    device = torch.device("cuda" if (torch.cuda.is_available() and config.REQUIRE_CUDA) else "cpu")
+    # 有 GPU 就用；REQUIRE_CUDA 只用于"要求但不可用时报错"，不该反过来禁用 GPU。
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def loader(data, shuffle):
         X, y = data

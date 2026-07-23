@@ -14,6 +14,7 @@ import threading
 import time
 
 from .. import config
+from ..safe_path import is_safe_id
 from ..use_model import labels
 from ..use_model.fea_emotion import classify_fea
 
@@ -131,6 +132,8 @@ class SequencePredictor:
         self.window_s = float(meta.get("window_s", config.PREDICT_WINDOW_S))
         self.rate_hz = float(meta.get("rate_hz", 30))
         self.seq_len = int(meta.get("seq_len", round(self.window_s * self.rate_hz)))
+        # 模型只会预测其训练时的固定 horizon；响应按此标注，勿回显请求值（否则闭环时序错标）。
+        self.horizon_s = float(meta.get("horizon_s", config.PREDICT_HORIZON_S))
         self._torch = torch
         self._device = device
 
@@ -152,15 +155,16 @@ class SequencePredictor:
         return arr[lo] * (1 - frac) + arr[hi] * frac              # (seq_len, 63)
 
     def predict(self, window: dict, horizon_s: float):
+        # horizon_s（请求值）被忽略：模型输出对应其训练 horizon（self.horizon_s）。
         fea = _parse_fea((window or {}).get("fea"))
         if not fea:
-            return _neutral_response(horizon_s)
+            return _neutral_response(self.horizon_s)
         torch = self._torch
         x = torch.from_numpy(self._resample(fea)).unsqueeze(0).to(self._device)
         with torch.no_grad():
             probs = torch.softmax(self.model(x)[0], dim=0).cpu().numpy()
         scores = {en: float(probs[i]) for i, en in enumerate(EN)}
-        return _response(scores, fea[-1][0], horizon_s)
+        return _response(scores, fea[-1][0], self.horizon_s)
 
 
 # ── sidecar / 注册表 ──────────────────────────────────────────────
@@ -203,6 +207,8 @@ def _get(model_id, device):
         return _RULE
     if model_id in _cache:
         return _cache[model_id]
+    if not is_safe_id(model_id):     # 阻断路径穿越（../ 等）→ 视为不存在
+        raise KeyError(model_id)
     sidecar = _sidecar_path(model_id)
     ckpt = config.PREDICT_CHECKPOINT_DIR / f"{model_id}.pt"
     if not (sidecar.exists() and ckpt.exists()):

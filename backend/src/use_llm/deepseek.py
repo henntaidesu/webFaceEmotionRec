@@ -112,6 +112,55 @@ def _format_trajectory(trajectory, current) -> str:
     return "\n".join(lines) if lines else "- (no samples)"
 
 
+_SCENE_SYSTEM_PROMPT = (
+    "You are an art director generating a single 360-degree EQUIRECTANGULAR PANORAMA "
+    "text-to-image prompt used as a VR emotional stimulus. You are given a TARGET emotion, "
+    "a BASE scene chosen by the operator, and an INTENSITY DIRECTIVE describing how strongly "
+    "the scene should evoke that emotion RIGHT NOW (relative to the viewer's measured state). "
+    "Rewrite the base scene into a vivid prompt whose mood, palette, lighting and composition "
+    "match BOTH the target emotion AND the requested intensity level: a stronger directive means "
+    "a more extreme, saturated, unambiguous version of that emotion; a weaker/softening directive "
+    "means a milder, gentler version. Keep it a coherent 360 panorama (no people). "
+    "Reply with STRICT JSON only, keys: "
+    '"positive" (detailed English image prompt, comma-separated tags/phrases, MUST start with '
+    "\"equirectangular 360 panorama, \"), "
+    '"negative" (English things to avoid, comma-separated), '
+    '"scene" (short English scene title), '
+    '"reasoning" (ONE short Chinese sentence: how the target emotion + intensity shaped the image). '
+    "No text outside the JSON object."
+)
+
+
+def generate_scene_prompt(emotion, scene, directive, locale="zh") -> dict:
+    """场景驱动的动态提示词：给定目标情绪 + 基础场景 + 强度指令 → {positive,negative,scene,reasoning}。
+
+    调制策略（递进/目标带/剂量阶梯/随机）由前端计算成 `directive` 文本传入，这里只负责
+    让 DeepSeek 按目标情绪与强度把基础场景改写成全景提示词。失败抛 RuntimeError。
+    """
+    emo = str(emotion or "").strip()
+    zh = _EMO_ZH.get(emo, emo)
+    user_msg = (
+        f"TARGET emotion: {emo} ({zh})\n"
+        f"BASE scene: {str(scene or '').strip() or '(operator gave no scene; invent a fitting one)'}\n"
+        f"INTENSITY DIRECTIVE: {str(directive or 'render at a natural, moderate intensity').strip()}\n\n"
+        "Return ONE 360 panorama prompt (as JSON) at the requested emotion and intensity."
+    )
+    parsed = _chat(
+        [{"role": "system", "content": _SCENE_SYSTEM_PROMPT},
+         {"role": "user", "content": user_msg}],
+        temperature=_settings()["temperature"],
+    )
+    positive = str(parsed.get("positive") or "").strip()
+    if not positive:
+        raise RuntimeError("DeepSeek 返回缺少 positive 提示词")
+    return {
+        "positive": positive,
+        "negative": str(parsed.get("negative") or "").strip(),
+        "scene": str(parsed.get("scene") or "").strip(),
+        "reasoning": str(parsed.get("reasoning") or "").strip(),
+    }
+
+
 def generate_image_prompt(trajectory, current, locale="zh") -> dict:
     """调用 DeepSeek，返回 {positive, negative, scene, reasoning}。"""
     traj_text = _format_trajectory(trajectory, current)

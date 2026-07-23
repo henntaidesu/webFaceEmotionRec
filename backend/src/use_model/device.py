@@ -20,7 +20,7 @@ def select_device() -> torch.device:
         gpu_name = torch.cuda.get_device_name(index)
         cuda_ver = torch.version.cuda
         logger.info(
-            "✅ GPU 已启用: %s  |  CUDA %s  |  PyTorch %s",
+            "[GPU] 已启用: %s  |  CUDA %s  |  PyTorch %s",
             gpu_name, cuda_ver, torch.__version__,
         )
         return device
@@ -33,5 +33,5 @@ def select_device() -> torch.device:
             "如需在 CPU 上运行，请设置环境变量 REQUIRE_CUDA=0。"
         )
 
-    logger.warning("⚠️  未检测到 GPU，将使用 CPU 运算（性能较低）")
+    logger.warning("[!] 未检测到 GPU，将使用 CPU 运算（性能较低）")
     return torch.device("cpu")

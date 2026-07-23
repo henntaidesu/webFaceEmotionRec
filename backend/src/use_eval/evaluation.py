@@ -135,18 +135,25 @@ def start_eval(raw_params: dict) -> dict:
     """启动评测。已有任务在跑则抛 RuntimeError。"""
     global _THREAD
     with _LOCK:
-        if _JOB["status"] == "running":
+        if _JOB["status"] in ("running", "starting"):
             raise RuntimeError("已有评测任务正在运行")
-    params = _parse_params(raw_params)
+        _prev_status = _JOB["status"]
+        _JOB["status"] = "starting"     # 占位，防并发第二个 start 通过检查各起一个线程
+    try:
+        params = _parse_params(raw_params)
 
-    # 解析模型显示名（用于记录与展示）
-    from ..use_model import model_registry
-    model_name = params["model_id"]
-    for m in model_registry.list_models()["models"]:
-        if m["id"] == params["model_id"]:
-            model_name = m["name"]
-            break
-    params["model_name"] = model_name
+        # 解析模型显示名（用于记录与展示）
+        from ..use_model import model_registry
+        model_name = params["model_id"]
+        for m in model_registry.list_models()["models"]:
+            if m["id"] == params["model_id"]:
+                model_name = m["name"]
+                break
+        params["model_name"] = model_name
+    except Exception:
+        with _LOCK:
+            _JOB["status"] = _prev_status
+        raise
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     params["eval_id"] = f"eval_{ts}_{params['model_id']}_{params['split']}_{params['occlusion']}"
@@ -196,6 +203,9 @@ def _build_recognizer(model_id: str):
     models = get_models()
     if model_id == model_registry.BUILTIN_ID:
         return models.emotion, models.device
+    from ..safe_path import is_safe_id
+    if not is_safe_id(model_id):     # 阻断路径穿越 → 防经 torch.load 加载越界 .pt
+        raise FileNotFoundError(f"模型权重不存在: {model_id}")
     ckpt = config.CHECKPOINT_DIR / f"{model_id}.pt"
     if not ckpt.exists():
         raise FileNotFoundError(f"模型权重不存在: {model_id}")
@@ -213,7 +223,8 @@ def _collect_samples(datasets, split):
         if not os.path.isdir(root):
             continue
         ds = tvd.ImageFolder(str(root))
-        assert ds.classes == classes, f"{name}/{split} 类别顺序异常: {ds.classes}"
+        if ds.classes != classes:      # 显式检查（assert 在 -O 下被跳过）
+            raise RuntimeError(f"{name}/{split} 类别顺序异常: {ds.classes}")
         samples.extend(ds.samples)  # [(path, target), ...]
     return samples
 

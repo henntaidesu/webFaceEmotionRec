@@ -17,6 +17,7 @@
 VECTOR 值可传 list（自动格式化为 '[...]'::vector）；JSONB 值可传 dict/list（自动 json）。
 """
 import json
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
@@ -310,12 +311,17 @@ class BaseModel(ABC):
                 }):
                     return False
 
-        # 删除多余列（主键除外）
+        # 删除多余列（主键除外）——默认【不删】，避免改字段名/schema 漂移时静默毁数据。
+        # 确需自动删列时设环境变量 DB_ALLOW_DROP_COLUMN=1。
+        allow_drop = os.getenv("DB_ALLOW_DROP_COLUMN", "").strip().lower() in {"1", "true", "yes", "on"}
         for name, info in existing.items():
             if name in defined:
                 continue
             if info.get("pk"):
                 print(f"表 {table} 字段 {name} 是主键，跳过删除")
+                continue
+            if not allow_drop:
+                print(f"表 {table} 存在多余字段 {name}（保留；如确需删除设 DB_ALLOW_DROP_COLUMN=1）")
                 continue
             print(f"表 {table} 存在多余字段 {name}，正在删除…")
             if not db.drop_column(table, name):

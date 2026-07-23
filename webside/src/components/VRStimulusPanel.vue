@@ -63,7 +63,52 @@
             <label class="field-label">{{ locale.stimulus.scene }}</label>
             <button class="use-emotion-btn" @click="pickPrompt">{{ locale.stimulus.pick }}</button>
           </div>
+          <select v-model.number="selectedSceneIdx" class="ctrl-select scene-select" @change="applyScene">
+            <option v-for="(s, i) in curScenes" :key="i" :value="i">{{ i + 1 }}. {{ s }}</option>
+          </select>
           <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" />
+        </div>
+
+        <!-- 动态情绪闭环采集：DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈 -->
+        <div class="field loop-card">
+          <label class="field-label">🔁 动态情绪闭环采集</label>
+          <p class="hs-hint">选情绪+场景为种子 → DeepSeek 按实时强度动态生成提示词 → 出图推头显 → 采集情绪变化写库</p>
+          <div class="two-col">
+            <div class="field">
+              <label class="field-label">调制模式</label>
+              <select v-model="loopMode" class="ctrl-select">
+                <option v-for="m in LOOP_MODES" :key="m.key" :value="m.key">{{ m.zh }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label">目标强度（0–1，仅目标带调节用）</label>
+              <input type="number" v-model.number="targetIntensity" class="ctrl-num" min="0" max="1" step="0.05" />
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label class="field-label">受试者 ID</label>
+              <input type="text" v-model="subjectId" class="ctrl-num" />
+            </div>
+            <div class="field">
+              <label class="field-label">观看/测量窗（秒）</label>
+              <input type="number" v-model.number="measureWindowSec" class="ctrl-num" min="2" max="60" />
+            </div>
+          </div>
+          <div class="row-group loop-actions">
+            <button class="btn-generate" :disabled="loopRunning || !online" @click="startLoop">▶ 开始闭环</button>
+            <button class="hs-btn hs-ghost" :disabled="!loopRunning" @click="stopLoop">■ 停止</button>
+          </div>
+          <div class="loop-meta">
+            <span>目标：{{ curEmotionObj?.zh }}</span>
+            <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
+            <span>已生成：{{ loopStep }} 张</span>
+          </div>
+          <svg class="intensity-curve" viewBox="0 0 280 60" preserveAspectRatio="none">
+            <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
+            <polyline v-if="curvePath" :points="curvePath" class="curve-line" />
+          </svg>
+          <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
         </div>
 
         <!-- 负向提示词 -->
@@ -310,7 +355,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, reactive, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import {
   checkOnline,
   fetchWorkflow,
@@ -329,6 +374,7 @@ import {
 } from '../api/comfyuiApi.js'
 import { randomVrStimulus, saveStimulusImage } from '../api/vrStimulus.js'
 import { getHeadsetStatus, connectHeadset, fetchHeadsetView } from '../api/headset.js'
+import { fetchFeaLatest, startSession as startAffectSession, stopSession as stopAffectSession, recordImage, generateScenePrompt } from '../api/affect.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
 const PanoramaViewer = defineAsyncComponent(() => import('./PanoramaViewer.vue'))
 
@@ -344,7 +390,7 @@ const PANO_PREFIX =
 const DEFAULT_NEG =
   'lowres, worst quality, blurry, distorted, polar distortion, poles warping, watermark, text, people, person, human'
 
-// 7 类情绪 → 诱导该情绪的 360° 场景库（英文喂模型）
+// 7 类情绪 → 诱导该情绪的 360° 场景库（每类 10 条，英文喂模型；下拉选择）
 const EMOTIONS = [
   { key: 'happy', zh: '开心', scenes: [
     'sunny tropical beach paradise, turquoise water, palm trees, bright cheerful daylight',
@@ -352,6 +398,11 @@ const EMOTIONS = [
     'colorful amusement park with a carousel and floating balloons, festive joyful atmosphere',
     'cozy sunlit green meadow with playful puppies, golden warm light',
     'vibrant festival at night with fireworks and confetti, celebration, joyful glowing lights',
+    'children flying colorful kites on a breezy sunny hilltop, cheerful joyful air',
+    'warm cafe terrace with fairy lights and blooming flowers, bright happy afternoon',
+    'radiant rainbow arching over rolling green hills after gentle rain, hopeful light',
+    'lively beach bonfire at golden sunset, sparkling warmth, celebratory glow',
+    'sunlit orchard heavy with ripe fruit, singing birds, abundant joyful spring',
   ] },
   { key: 'sad', zh: '悲伤', scenes: [
     'lonely rainy city street at dusk, wet empty pavement, grey melancholic mood',
@@ -359,6 +410,11 @@ const EMOTIONS = [
     'foggy grey cemetery under bare trees, somber sorrowful atmosphere',
     'desolate autumn forest with falling withered leaves, overcast heavy sky',
     'empty quiet hospital corridor at night, cold blue melancholic light',
+    'single wilting flower on a rain-streaked windowsill, grey quiet sorrow',
+    'empty swing swaying in a deserted foggy playground, lonely dusk',
+    'faded old photographs scattered on a dusty floor, nostalgic aching silence',
+    'weathered empty bench facing a cold grey sea under heavy clouds, mournful solitude',
+    'dim candle burning low in a bare shadowed room, melancholic fading light',
   ] },
   { key: 'angry', zh: '愤怒', scenes: [
     'chaotic gridlock traffic jam, glaring red brake lights, frustrating congestion',
@@ -366,6 +422,11 @@ const EMOTIONS = [
     'ruined war-torn city street, rubble and thick smoke, tense hostile mood',
     'raging wildfire consuming a dark forest, fierce red flames surrounding, oppressive heat',
     'crowded overwhelming subway platform at rush hour, claustrophobic irritating crush',
+    'violent thunderstorm smashing a jagged coastline, furious crashing waves',
+    'cracked scorched desert under a blood-red oppressive sky, seething heat',
+    'shattered glass and sparks in a dark industrial alley, aggressive tension',
+    'erupting volcano spewing molten lava and ash, raging destructive fury',
+    'tangled barbed wire against a smoldering crimson horizon, hostile menace',
   ] },
   { key: 'surprise', zh: '惊讶', scenes: [
     'sudden glowing magical portal opening in a mystical forest, dazzling light burst',
@@ -373,13 +434,23 @@ const EMOTIONS = [
     'spectacular cosmic aurora and an exploding galaxy overhead, awe-inspiring space',
     'giant whimsical creature emerging unexpectedly from the clouds, astonishing scene',
     'fantastical crystal cave suddenly revealed, sparkling with unexpected wonder',
+    'meteor shower suddenly streaking across a vast starry desert sky, gasping wonder',
+    'hidden waterfall abruptly revealed behind parting jungle mist, astonishing discovery',
+    'thousands of birds bursting into the sky at once, startling spectacle',
+    'bioluminescent ocean suddenly glowing electric blue at night, unexpected magic',
+    'towering ancient ruins emerging from dissolving fog, breathtaking revelation',
   ] },
   { key: 'fear', zh: '恐惧', scenes: [
     'dark haunted forest at midnight, twisted trees, eerie fog, menacing shadows',
     'abandoned decaying asylum hallway, flickering lights, horror atmosphere',
-    'standing at the edge of a dizzying tall cliff, vertigo, deep dark abyss below',
+    'edge of a dizzying tall cliff, vertigo, deep dark abyss below',
     'deep pitch-black cave with an unknown lurking presence, claustrophobic dread',
     'creepy foggy graveyard at night with looming tombstones, chilling terror',
+    'narrow flooded tunnel with rising black water and distant echoes, mounting dread',
+    'dense dark woods with glowing unseen eyes between the trees, creeping terror',
+    'derelict rusted ship interior tilting in the dark, suffocating trapped fear',
+    'endless foggy staircase descending into pitch black, vertiginous unknown',
+    'abandoned carnival at night with broken rides and eerie silence, sinister unease',
   ] },
   { key: 'disgust', zh: '厌恶', scenes: [
     'overflowing garbage dump with rotting waste, swarming flies, foul filthy scene',
@@ -387,6 +458,11 @@ const EMOTIONS = [
     'moldy abandoned kitchen with rotten spoiled food, revolting filth',
     'swarm of insects crawling over decaying matter, nauseating scene',
     'polluted toxic swamp with murky slime and floating refuse, disgusting atmosphere',
+    'rotting fruit and writhing maggots on a filthy counter, stomach-turning decay',
+    'slime-covered flooded sewer with foul brown sludge, repulsive stench',
+    'pile of spoiled meat swarming with flies in a grimy alley, nauseating filth',
+    'stagnant green pond choked with scum and dead fish, revolting rot',
+    'mold-covered damp basement with dripping grime and cobwebs, sickening squalor',
   ] },
   { key: 'neutral', zh: '平静', scenes: [
     'plain minimalist empty white studio, soft even light, calm neutral space',
@@ -394,6 +470,11 @@ const EMOTIONS = [
     'calm empty library reading room, soft daylight, peaceful stillness',
     'gentle misty lake at dawn, flat calm water, serene neutral mood',
     'simple tidy modern living room, soft neutral daylight, relaxed calm',
+    'plain grey concrete room with soft flat lighting, calm featureless space',
+    'still empty subway platform in even daylight, quiet neutral calm',
+    'flat overcast beach with smooth grey sand and calm sea, tranquil emptiness',
+    'simple wooden desk in a bare room with soft window light, relaxed neutral',
+    'gentle rolling green field under a mild cloudy sky, serene ordinary calm',
   ] },
 ]
 
@@ -458,9 +539,235 @@ async function pickPrompt() {
 }
 function selectEmotion(key) {
   selectedEmotion.value = key
+  selectedSceneIdx.value = 0
   pickPrompt()
 }
 pickPrompt() // 初始填一条
+
+// ── 场景下拉：选中即把该场景（带全景前缀）填入提示词框 ──
+const curScenes = computed(() => curEmotionObj.value?.scenes ?? [])
+const selectedSceneIdx = ref(0)
+function applyScene() {
+  const s = curScenes.value[selectedSceneIdx.value]
+  if (s) currentPrompt.value = PANO_PREFIX + s
+}
+watch(selectedEmotion, () => { selectedSceneIdx.value = 0 })
+
+// ── 动态情绪闭环采集（DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈）──
+const LOOP_MODES = [
+  { key: 'amplify', zh: '递进强化' },
+  { key: 'titrate', zh: '目标带调节' },
+  { key: 'dose', zh: '剂量阶梯' },
+  { key: 'random', zh: '随机' },
+]
+const loopMode = ref('amplify')
+const targetIntensity = ref(0.6)
+const subjectId = ref('anon')
+const measureWindowSec = ref(6)
+const loopRunning = ref(false)
+const loopStep = ref(0)
+const loopStatus = ref('')
+const loopSessionId = ref('')
+const latestIntensity = ref(0)
+const intensitySeries = reactive([])   // 目标情绪强度随时间的曲线点 [{ v }]
+let latestFeaData = null
+let feaTimer = null
+let loopAbort = false
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// 从最近一帧 FEA 取「当前所选目标情绪」的分数（归一化到 0–1）
+function targetScore(data) {
+  if (!data?.success || !data.faces?.length) return null
+  const em = data.faces[0].emotions || {}
+  const raw = em[curEmotionObj.value?.zh]
+  if (typeof raw !== 'number') return null
+  return raw > 1 ? raw / 100 : raw
+}
+// 7 类情绪情境向量（英文键，供 pgvector context 存储）
+function emotionsEnFromLatest() {
+  const em = latestFeaData?.faces?.[0]?.emotions || {}
+  const out = {}
+  for (const e of EMOTIONS) {
+    const raw = em[e.zh]
+    out[e.key] = typeof raw === 'number' ? (raw > 1 ? raw / 100 : raw) : 0
+  }
+  return out
+}
+
+// 按调制模式 + 实时强度算出给 DeepSeek 的「强度指令」
+function computeDirective(step, measured) {
+  const emo = selectedEmotion.value
+  const T = Number(targetIntensity.value) || 0.6
+  let level, directive, sceneIdx = selectedSceneIdx.value
+  if (loopMode.value === 'amplify') {
+    level = Math.min(5, 1 + step)
+    directive = `intensify strongly toward peak ${emo}; render at intensity level ${level}/5, stronger and more extreme than the previous image`
+  } else if (loopMode.value === 'titrate') {
+    const m = measured ?? 0
+    let dir
+    if (m < T - 0.1) { level = Math.min(5, Math.round(T * 5) + 1); dir = 'increase' }
+    else if (m > T + 0.1) { level = Math.max(1, Math.round(T * 5) - 1); dir = 'reduce' }
+    else { level = Math.max(1, Math.round(T * 5)); dir = 'hold' }
+    directive = `the viewer's current ${emo} intensity is ${m.toFixed(2)}, target is ${T.toFixed(2)}; ${dir} the emotional intensity toward the target, render at level ${level}/5`
+  } else if (loopMode.value === 'dose') {
+    level = 1 + (step % 5)
+    directive = `dose-response ladder: render ${emo} at a fixed dose level ${level}/5`
+  } else {
+    level = 1 + Math.floor(Math.random() * 5)
+    sceneIdx = Math.floor(Math.random() * Math.max(1, curScenes.value.length))
+    directive = `render ${emo} at a random intensity level ${level}/5`
+  }
+  return { directive, level, sceneText: curScenes.value[sceneIdx] || '', sceneIdx }
+}
+
+// 精简版单张生成：返回图片 URL（复用工作流/WS/history 兜底），不改动单张生成状态
+function genImageUrl(positive, negativeText) {
+  return new Promise((resolve, reject) => {
+    let settled = false, sock = null, pollId = null
+    const done = async (pid) => {
+      if (settled) return; settled = true
+      if (pollId) clearInterval(pollId)
+      try { const urls = await collectImages(pid); resolve(urls[0] || '') }
+      catch (e) { reject(e) }
+      finally { if (sock) sock.close() }
+    }
+    ;(async () => {
+      try {
+        const clientId = makeClientId()
+        const workflow = await buildWorkflow({ positive, negativeText, seedVal: -1 })
+        sock = openProgressWS(clientId)
+        const { prompt_id } = await queuePrompt(clientId, workflow)
+        sock.addEventListener('message', (e) => {
+          let m; try { m = JSON.parse(e.data) } catch { return }
+          const { type, data } = m
+          if (type === 'progress' && data?.prompt_id === prompt_id) { progress.current = data.value; progress.max = data.max }
+          if ((type === 'execution_success' && data?.prompt_id === prompt_id) ||
+              (type === 'executing' && data?.node === null && data?.prompt_id === prompt_id)) done(prompt_id)
+          if (type === 'execution_error' && data?.prompt_id === prompt_id && !settled) {
+            settled = true; if (sock) sock.close(); reject(new Error(data?.exception_message || 'execution error'))
+          }
+        })
+        sock.addEventListener('close', () => {
+          if (settled) return
+          let n = 0
+          pollId = setInterval(async () => {
+            if (settled) return
+            if (++n > 200) { settled = true; clearInterval(pollId); reject(new Error('轮询超时：ComfyUI 未返回结果')); return }
+            try { const h = await getHistory(prompt_id); if (h[prompt_id]?.outputs) done(prompt_id) } catch { /* 继续 */ }
+          }, 3000)
+        })
+      } catch (e) { if (!settled) { settled = true; reject(e) } }
+    })()
+  })
+}
+
+async function pollFeaOnce() {
+  try {
+    const data = await fetchFeaLatest()
+    latestFeaData = data
+    const v = targetScore(data)
+    if (v != null) {
+      latestIntensity.value = v
+      intensitySeries.push({ v })
+      if (intensitySeries.length > 120) intensitySeries.shift()
+    }
+  } catch { /* 忽略单次失败 */ }
+}
+
+async function runLoop() {
+  while (!loopAbort) {
+    const measured = latestIntensity.value
+    const { directive, level, sceneText, sceneIdx } = computeDirective(loopStep.value, measured)
+    if (loopMode.value === 'random') selectedSceneIdx.value = sceneIdx
+    loopStatus.value = `生成中…（第 ${loopStep.value + 1} 张 · level ${level}/5）`
+    let prompt
+    try {
+      prompt = await generateScenePrompt(selectedEmotion.value, sceneText, directive)
+    } catch (e) { loopStatus.value = `DeepSeek 失败：${e.message}`; break }
+    if (loopAbort) break
+    let url
+    try {
+      url = await genImageUrl(prompt.positive, prompt.negative || DEFAULT_NEG)
+    } catch (e) { loopStatus.value = `生成失败：${e.message}`; break }
+    if (loopAbort || !url) break
+    currentPrompt.value = prompt.positive
+    results.value = [{ url, emotion: selectedEmotion.value, label: curEmotionObj.value?.zh }]
+    // 存盘 + 推头显天空盒
+    let savedUrl = url
+    try {
+      const s = await saveStimulusImage(url, selectedEmotion.value, 'stimulus', { show: true })
+      if (s.path) savedUrl = `/api/stimulus/files/${s.path.replace(/^image\//, '')}`
+    } catch { /* 忽略存盘失败 */ }
+    // 记录刺激事件（含调制元数据，供后期预测分析）
+    try {
+      await recordImage({
+        session_id: loopSessionId.value,
+        ts_ms: Date.now(),
+        dominant: selectedEmotion.value,
+        emotions: emotionsEnFromLatest(),
+        prompt: prompt.positive, negative: prompt.negative, scene: prompt.scene, reasoning: prompt.reasoning,
+        image_url: savedUrl,
+        reaction: {
+          mode: loopMode.value, level,
+          target_intensity: Number(targetIntensity.value) || 0.6,
+          measured_intensity: measured, step: loopStep.value, page: 'stimulus',
+        },
+      })
+    } catch { /* 存储失败不中断闭环 */ }
+    loopStep.value++
+    loopStatus.value = `已展示第 ${loopStep.value} 张（level ${level}/5）· 采集情绪反应中…`
+    // 观看/测量窗：让 FEA 在当前图上累积后再生成下一张
+    await sleep(Math.max(2, Number(measureWindowSec.value) || 6) * 1000)
+  }
+  loopRunning.value = false
+}
+
+async function startLoop() {
+  if (loopRunning.value) return
+  if (!online.value) { loopStatus.value = 'ComfyUI 未连接'; return }
+  loopStatus.value = ''
+  try {
+    const r = await startAffectSession(subjectId.value || 'anon', {
+      page: 'stimulus', mode: loopMode.value,
+      target_emotion: selectedEmotion.value,
+      target_intensity: Number(targetIntensity.value) || 0.6,
+    })
+    loopSessionId.value = r.session_id
+  } catch (e) { loopStatus.value = `会话建立失败：${e.message}`; return }
+  loopRunning.value = true
+  loopAbort = false
+  loopStep.value = 0
+  intensitySeries.length = 0
+  feaTimer = setInterval(pollFeaOnce, 1000)
+  runLoop()
+}
+
+function stopLoop() {
+  loopAbort = true
+  loopRunning.value = false
+  if (feaTimer) { clearInterval(feaTimer); feaTimer = null }
+  if (loopSessionId.value) { stopAffectSession(loopSessionId.value).catch(() => {}); loopSessionId.value = '' }
+  loopStatus.value = (loopStatus.value || '') + ' — 已停止'
+}
+
+// 情绪强度曲线（内联 SVG polyline，0–1 → 60px 高）
+const curvePath = computed(() => {
+  const s = intensitySeries
+  if (s.length < 2) return ''
+  const W = 280, H = 60
+  return s.map((p, i) => {
+    const x = (i / (s.length - 1)) * W
+    const y = H - Math.max(0, Math.min(1, p.v)) * H
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+})
+
+onUnmounted(() => {
+  loopAbort = true
+  if (feaTimer) { clearInterval(feaTimer); feaTimer = null }
+  if (loopSessionId.value) stopAffectSession(loopSessionId.value).catch(() => {})
+})
 
 // ── 生成流程 ──
 const generating = ref(false)
@@ -516,16 +823,26 @@ async function doConnectHeadset() {
 // ── 头显用户视角预览（常驻右栏，持续轮询 /api/headset/view 拉最新一帧）──
 const headsetViewSrc = ref('')
 let headsetViewTimer = null
+let headsetViewAlive = false
 
-async function pollHeadsetView() {
-  const blob = await fetchHeadsetView().catch(() => null)
-  if (!blob) return
-  if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
-  headsetViewSrc.value = URL.createObjectURL(blob)
+// 自调度循环：等上一次请求 settle 再发下一次，避免 adb screencap 慢时请求堆叠淤塞隧道；
+// 未连接头显时跳过实际抓帧。
+async function pollHeadsetViewLoop() {
+  if (!headsetViewAlive) return
+  if (headset.ok) {
+    const blob = await fetchHeadsetView().catch(() => null)
+    if (blob) {
+      const prev = headsetViewSrc.value
+      headsetViewSrc.value = URL.createObjectURL(blob)
+      if (prev) URL.revokeObjectURL(prev)     // 顺序循环无重叠，撤销上一张安全
+    }
+  }
+  if (headsetViewAlive) headsetViewTimer = setTimeout(pollHeadsetViewLoop, 300)
 }
 
 onUnmounted(() => {
-  if (headsetViewTimer) clearInterval(headsetViewTimer)
+  headsetViewAlive = false
+  if (headsetViewTimer) clearTimeout(headsetViewTimer)
   if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
 })
 
@@ -536,7 +853,7 @@ const progressPct = computed(() =>
 let ws = null
 let pollTimer = null
 
-async function buildWorkflow({ positive, seedVal } = {}) {
+async function buildWorkflow({ positive, seedVal, negativeText } = {}) {
   let raw
   try {
     raw = await fetchWorkflow(STIMULUS_WORKFLOW)
@@ -548,7 +865,7 @@ async function buildWorkflow({ positive, seedVal } = {}) {
   // positive 已包含 360 全景前缀（CSV 库与内置回退均已带上）
   api = applyPromptOverrides(api, {
     positive: positive ?? currentPrompt.value,
-    negative: negative.value,
+    negative: negativeText ?? negative.value,
     seed: seedVal ?? seed.value,
   })
   api = applyGenParams(api, {
@@ -882,7 +1199,15 @@ function waitForPrompt(socket, promptId) {
       }
     }
     socket.addEventListener('message', onMsg)
+    let pollN = 0
     poll = setInterval(async () => {
+      if (++pollN > 200) {          // ~10min 上限：Comfy 崩/节点错时不再无限轮询
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error('轮询超时：ComfyUI 未返回结果'))
+        return
+      }
       try {
         const h = await getHistory(promptId)
         if (h[promptId]?.outputs) finish()
@@ -897,7 +1222,8 @@ onMounted(() => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
   refreshHeadset()
-  headsetViewTimer = setInterval(pollHeadsetView, 150)
+  headsetViewAlive = true
+  pollHeadsetViewLoop()
 })
 onUnmounted(() => {
   clearInterval(connTimer)
@@ -1247,4 +1573,26 @@ onUnmounted(() => {
 }
 .hs-view-img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .hs-view-waiting { font-size: 0.82rem; color: rgba(255, 255, 255, 0.4); }
+
+/* ── 动态情绪闭环采集 ── */
+.scene-select { margin-bottom: 6px; }
+.loop-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--color-surface-2);
+}
+.loop-actions { margin-top: 6px; gap: 8px; }
+.loop-meta {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  margin: 8px 0 4px; font-size: 0.82rem;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
+}
+.intensity-curve {
+  width: 100%; height: 60px; display: block;
+  background: rgba(0, 0, 0, 0.15); border-radius: 6px;
+}
+.curve-line { fill: none; stroke: #4ade80; stroke-width: 1.5; }
+.target-line { stroke: rgba(255, 255, 255, 0.35); stroke-width: 1; stroke-dasharray: 4 3; }
+.loop-status { margin-top: 6px; }
 </style>

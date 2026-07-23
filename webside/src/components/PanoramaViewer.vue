@@ -152,10 +152,12 @@ onUnmounted(() => {
     el.removeEventListener('mousedown', onDown)
     el.removeEventListener('touchstart', onDown)
     el.removeEventListener('wheel', onWheel)
+    const xrSession = renderer.xr?.getSession?.()   // 若进过 VR，显式结束会话，别让头显停在呈现态
+    if (xrSession) xrSession.end().catch(() => {})
     renderer.dispose()
   }
   if (texture) texture.dispose()
-  if (sphere) sphere.geometry.dispose()
+  if (sphere) { sphere.geometry.dispose(); sphere.material.dispose() }
 })
 </script>
 

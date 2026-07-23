@@ -84,7 +84,9 @@ def _prune_checkpoints(run_id: str) -> None:
         if m:
             ckpts.append((int(m.group(1)), entry.path))
     ckpts.sort()  # 按 epoch 升序
-    for _, path in ckpts[:-config.KEEP_CHECKPOINTS]:
+    keep = config.KEEP_CHECKPOINTS
+    to_delete = ckpts[:-keep] if keep > 0 else ckpts   # keep=0 → 全删，而非切片成空不删
+    for _, path in to_delete:
         try:
             os.remove(path)
         except OSError as e:
@@ -145,14 +147,17 @@ def get_run(run_id: str) -> dict | None:
     if csv_path.exists():
         with open(csv_path, encoding="utf-8") as f:
             for r in csv.DictReader(f):
-                epochs.append({
-                    "epoch": int(float(r["epoch"])) if r.get("epoch") else None,
-                    "train_loss": _num(r.get("train_loss")),
-                    "train_acc": _num(r.get("train_acc")),
-                    "val_loss": _num(r.get("val_loss")),
-                    "val_acc": _num(r.get("val_acc")),
-                    "macro_f1": _num(r.get("macro_f1")),
-                    "best_f1": _num(r.get("best_f1")),
-                    "is_best": str(r.get("is_best")).lower() in ("1", "true"),
-                })
+                try:                     # 容错：崩溃写入产生的半行不应使整个 run 不可读
+                    epochs.append({
+                        "epoch": int(float(r["epoch"])) if r.get("epoch") else None,
+                        "train_loss": _num(r.get("train_loss")),
+                        "train_acc": _num(r.get("train_acc")),
+                        "val_loss": _num(r.get("val_loss")),
+                        "val_acc": _num(r.get("val_acc")),
+                        "macro_f1": _num(r.get("macro_f1")),
+                        "best_f1": _num(r.get("best_f1")),
+                        "is_best": str(r.get("is_best")).lower() in ("1", "true"),
+                    })
+                except (ValueError, TypeError):
+                    continue
     return {"meta": meta, "epochs": epochs}

@@ -180,6 +180,9 @@ async def models_delete(model_id: str):
 
 
 # ── 网页生成的刺激图落盘（image/<emotion>/<时间戳>.png）────────────
+_IMAGE_EXT_ALLOWED = {"png", "jpg", "jpeg", "webp", "bmp"}
+
+
 @app.post("/api/stimulus/save")
 async def stimulus_save(body: dict = Body(default=None)):
     """接收前端生成的刺激图，按情感分目录存入 image/，文件名用时间戳（精确到秒）。
@@ -201,6 +204,8 @@ async def stimulus_save(body: dict = Body(default=None)):
         return JSONResponse(status_code=400, content={"ok": False, "error": "图像解码失败"})
 
     ext = re.sub(r"[^a-z0-9]", "", str(body.get("ext") or "png").lower()) or "png"
+    if ext not in _IMAGE_EXT_ALLOWED:     # 只允许图片扩展名，禁 pt/json 等（防作为模型权重被 torch.load）
+        ext = "png"
     folder = re.sub(r"[^A-Za-z0-9_-]", "", str(body.get("folder") or ""))
     dest_dir = config.IMAGE_DIR / folder / emotion if folder else config.IMAGE_DIR / emotion
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -231,24 +236,34 @@ async def stimulus_images(emotion: str = "", limit: int = 1000):
     url 指向 /api/stimulus/files/<相对路径> 静态服务。
     """
     emo_filter = emotion.strip().lower()
-    items = []
-    for p in config.IMAGE_DIR.rglob("*"):
-        if not p.is_file() or p.suffix.lower() not in _IMAGE_EXT:
-            continue
-        emo = p.parent.name.lower()
-        if emo not in config.TRAIN_CLASSES:
-            continue
-        if emo_filter and emo != emo_filter:
-            continue
-        rel = p.relative_to(config.IMAGE_DIR).as_posix()
-        items.append({
-            "emotion": emo,
-            "filename": p.name,
-            "path": rel,
-            "url": f"/api/stimulus/files/{rel}",
-            "mtime": p.stat().st_mtime,
-        })
-    items.sort(key=lambda x: x["mtime"], reverse=True)
+
+    def _scan():
+        # 全量 rglob + stat 可能很慢；放线程池不阻塞事件循环。
+        items = []
+        for p in config.IMAGE_DIR.rglob("*"):
+            try:
+                if not p.is_file() or p.suffix.lower() not in _IMAGE_EXT:
+                    continue
+                emo = p.parent.name.lower()
+                if emo not in config.TRAIN_CLASSES:
+                    continue
+                if emo_filter and emo != emo_filter:
+                    continue
+                rel = p.relative_to(config.IMAGE_DIR).as_posix()
+                items.append({
+                    "emotion": emo,
+                    "filename": p.name,
+                    "path": rel,
+                    "url": f"/api/stimulus/files/{rel}",
+                    "mtime": p.stat().st_mtime,
+                })
+            except OSError:      # 遍历中文件被并发删除等 → 跳过
+                continue
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+        return items
+
+    loop = asyncio.get_event_loop()
+    items = await loop.run_in_executor(executor, _scan)
     return {"images": items[:max(1, limit)], "total": len(items)}
 
 
@@ -260,7 +275,10 @@ async def stimulus_images_delete(path: str = "", emotion: str = ""):
         target = (config.IMAGE_DIR / path).resolve()
         if not target.is_relative_to(root) or not target.is_file():
             return JSONResponse(status_code=400, content={"ok": False, "error": "非法路径"})
-        target.unlink()
+        try:
+            target.unlink()
+        except FileNotFoundError:      # 并发删除竞争 → 视为已删
+            pass
         return {"ok": True, "deleted": 1}
 
     emo = emotion.strip().lower()
@@ -268,8 +286,11 @@ async def stimulus_images_delete(path: str = "", emotion: str = ""):
         deleted = 0
         for p in config.IMAGE_DIR.rglob("*"):
             if p.is_file() and p.parent.name.lower() == emo and p.suffix.lower() in _IMAGE_EXT:
-                p.unlink()
-                deleted += 1
+                try:
+                    p.unlink()
+                    deleted += 1
+                except OSError:        # 并发删除竞争 → 跳过
+                    continue
         return {"ok": True, "deleted": deleted}
 
     return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 path 或 emotion"})
@@ -328,7 +349,11 @@ async def stimulus_show(body: dict = Body(default=None)):
 @app.get("/api/headset/status")
 async def headset_status():
     """网页轮询头显 USB 连接状态：adb 是否找到、设备是否连接/授权、隧道是否建立、应用是否在跑。"""
-    return headset.status(config.PORT, config.HEADSET_PACKAGE)
+    # adb 子进程可能阻塞数十秒；放线程池，避免冻结事件循环（含 /ws/emotion 实时流）。
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, headset.status, config.PORT, config.HEADSET_PACKAGE
+    )
 
 
 @app.post("/api/headset/connect")
@@ -336,7 +361,10 @@ async def headset_connect(body: dict = Body(default=None)):
     """网页「连接头显」：用数据线建立 adb 反向隧道（头显 localhost:PORT → 后端），可选启动应用。"""
     body = body or {}
     launch = bool(body.get("launch", True))
-    return headset.connect(config.PORT, config.HEADSET_PACKAGE, launch)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, headset.connect, config.PORT, config.HEADSET_PACKAGE, launch
+    )
 
 
 # ── 头显用户视角回传（头显渲染当前视角 → 后端中转 → 网页预览）────────
@@ -431,14 +459,17 @@ async def fea_latest():
 @app.post("/api/session/start")
 async def session_start(body: dict = Body(default=None)):
     """建立采集会话：{"subject_id", "session_id"?, "fea_rate_hz"?, "sync_offset_ms"?}。"""
-    return session_store.start_session(body or {})
+    # 会话读写落盘，放线程池避免阻塞事件循环。
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, session_store.start_session, body or {})
 
 
 @app.post("/api/session/ingest")
 async def session_ingest(body: dict = Body(default=None)):
     """追加一批四路事件：{"session_id", "fea":[...], "gaze":[...], "stimulus":[...], "selfreport":[...]}。"""
     try:
-        return session_store.ingest(body or {})
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(executor, session_store.ingest, body or {})
     except KeyError:
         return JSONResponse(status_code=404, content={"ok": False, "error": "会话不存在或未 start"})
 
@@ -447,7 +478,8 @@ async def session_ingest(body: dict = Body(default=None)):
 async def session_stop(body: dict = Body(default=None)):
     """收尾并写 meta.json：{"session_id", "sync_offset_ms"?}。"""
     try:
-        return session_store.stop_session(body or {})
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(executor, session_store.stop_session, body or {})
     except KeyError:
         return JSONResponse(status_code=404, content={"ok": False, "error": "会话不存在或已 stop"})
 
@@ -547,6 +579,32 @@ async def prompt_generate(body: dict = Body(default=None)):
             lambda: deepseek.generate_image_prompt(
                 body.get("trajectory") or [],
                 body.get("current") or {},
+                body.get("locale") or "zh",
+            ),
+        )
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    return {"ok": True, **result}
+
+
+@app.post("/api/prompt/scene")
+async def prompt_scene(body: dict = Body(default=None)):
+    """场景驱动的动态提示词（刺激页闭环用）。
+
+    请求体：{"emotion":str, "scene":str, "directive":str, "locale"?}。
+    directive 由前端按调制模式（递进/目标带/剂量阶梯/随机）+ 目标情绪实时强度算好。
+    """
+    body = body or {}
+    if not deepseek.is_configured():
+        return JSONResponse(status_code=503, content={"ok": False, "error": "DEEPSEEK_API_KEY 未配置"})
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: deepseek.generate_scene_prompt(
+                body.get("emotion") or "",
+                body.get("scene") or "",
+                body.get("directive") or "",
                 body.get("locale") or "zh",
             ),
         )
@@ -667,11 +725,15 @@ async def affect_recommend(body: dict = Body(default=None)):
     if (err := _require_pg()) is not None:
         return err
     body = body or {}
+    try:
+        k = int(body.get("k") or 5)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "k 非法"})
     loop = asyncio.get_event_loop()
     try:
         r = await loop.run_in_executor(
             executor,
-            lambda: pg_store.recommend(body.get("emotions"), int(body.get("k") or 5), body.get("subject_id")),
+            lambda: pg_store.recommend(body.get("emotions"), k, body.get("subject_id")),
         )
     except RuntimeError as e:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
