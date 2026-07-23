@@ -135,6 +135,7 @@ def insert_image(rec: dict) -> dict:
         scene=rec.get("scene"),
         reasoning=rec.get("reasoning"),
         image_url=rec.get("image_url"),
+        image_path=rec.get("image_path"),
         liked=bool(liked) if liked is not None else None,
         reaction=rec.get("reaction"),
     )

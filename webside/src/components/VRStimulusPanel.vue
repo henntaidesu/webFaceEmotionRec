@@ -28,51 +28,57 @@
       </div>
 
       <template v-else>
-        <p class="panel-desc">{{ locale.stimulus.desc }}</p>
-
-        <!-- ── 头显 USB 连接（后端 adb 反向隧道，网页驱动）── -->
-        <div class="headset-bar">
-          <span class="hs-title">🔌 {{ locale.stimulus.hsTitle }}</span>
-          <span class="hs-status" :class="headset.ok ? 'hs-ok' : 'hs-bad'">{{ headsetText }}</span>
-          <button class="hs-btn" :disabled="headset.busy" @click="doConnectHeadset">
-            {{ headset.busy ? locale.stimulus.hsConnecting : locale.stimulus.hsConnect }}
-          </button>
-          <button class="hs-btn hs-ghost" :disabled="headset.busy" @click="refreshHeadset">
-            {{ locale.stimulus.hsRefresh }}
-          </button>
-        </div>
-        <p class="hs-hint">{{ locale.stimulus.hsHint }}</p>
-
-        <!-- 目标情绪 -->
-        <div class="field">
-          <label class="field-label">{{ locale.stimulus.emotion }}</label>
-          <div class="preset-btns">
-            <button
-              v-for="e in emotions"
-              :key="e.key"
-              class="preset-btn"
-              :class="{ active: selectedEmotion === e.key }"
-              @click="selectEmotion(e.key)"
-            >{{ e.label }}</button>
+        <!-- ① 头显连接 -->
+        <section class="sec">
+          <div class="sec-title">① 头显连接</div>
+          <div class="headset-bar">
+            <span class="hs-title">🔌 {{ locale.stimulus.hsTitle }}</span>
+            <span class="hs-status" :class="headset.ok ? 'hs-ok' : 'hs-bad'">{{ headsetText }}</span>
+            <button class="hs-btn" :disabled="headset.busy" @click="doConnectHeadset">
+              {{ headset.busy ? locale.stimulus.hsConnecting : locale.stimulus.hsConnect }}
+            </button>
+            <button class="hs-btn hs-ghost" :disabled="headset.busy" @click="refreshHeadset">
+              {{ locale.stimulus.hsRefresh }}
+            </button>
           </div>
-        </div>
+          <p class="hs-hint no-mb">{{ locale.stimulus.hsHint }}</p>
+        </section>
 
-        <!-- 场景提示词 -->
-        <div class="field">
-          <div class="field-label-row">
-            <label class="field-label">{{ locale.stimulus.scene }}</label>
-            <button class="use-emotion-btn" @click="pickPrompt">{{ locale.stimulus.pick }}</button>
+        <!-- ② 刺激种子：目标情绪 + 场景四要素（组合喂 DeepSeek 动态生成提示词）-->
+        <section class="sec">
+          <div class="sec-title">② 刺激种子</div>
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.emotion }}</label>
+            <div class="preset-btns">
+              <button
+                v-for="e in emotions"
+                :key="e.key"
+                class="preset-btn"
+                :class="{ active: selectedEmotion === e.key }"
+                @click="selectEmotion(e.key)"
+              >{{ e.label }}</button>
+            </div>
           </div>
-          <select v-model.number="selectedSceneIdx" class="ctrl-select scene-select" @change="applyScene">
-            <option v-for="(s, i) in curScenes" :key="i" :value="i">{{ i + 1 }}. {{ s }}</option>
-          </select>
-          <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" />
-        </div>
+          <div class="field">
+            <div class="field-label-row">
+              <label class="field-label">{{ locale.stimulus.scene }}</label>
+              <button class="use-emotion-btn" @click="randomScene">{{ locale.stimulus.pick }}</button>
+            </div>
+            <div class="two-col scene-dims">
+              <div class="dim-field" v-for="dim in SCENE_DIMS" :key="dim.key">
+                <label class="dim-label">{{ dimLabel(dim) }}</label>
+                <select v-model.number="sel[dim.key]" class="ctrl-select">
+                  <option v-for="(o, i) in dim.list" :key="i" :value="i">{{ optLabel(o) }}</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        <!-- 动态情绪闭环采集：DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈 -->
-        <div class="field loop-card">
-          <label class="field-label">🔁 动态情绪闭环采集</label>
-          <p class="hs-hint">选情绪+场景为种子 → DeepSeek 按实时强度动态生成提示词 → 出图推头显 → 采集情绪变化写库</p>
+        <!-- ③ 闭环参数：DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈 -->
+        <section class="sec">
+          <div class="sec-title">③ 闭环参数</div>
+          <p class="hs-hint">情绪+场景为种子 → DeepSeek 按实时强度动态生成提示词 → 出图推头显 → 采集情绪变化写库</p>
           <div class="two-col">
             <div class="field">
               <label class="field-label">调制模式</label>
@@ -84,8 +90,6 @@
               <label class="field-label">目标强度（0–1，仅目标带调节用）</label>
               <input type="number" v-model.number="targetIntensity" class="ctrl-num" min="0" max="1" step="0.05" />
             </div>
-          </div>
-          <div class="two-col">
             <div class="field">
               <label class="field-label">受试者 ID</label>
               <input type="text" v-model="subjectId" class="ctrl-num" />
@@ -95,10 +99,79 @@
               <input type="number" v-model.number="measureWindowSec" class="ctrl-num" min="2" max="60" />
             </div>
           </div>
-          <div class="row-group loop-actions">
-            <button class="btn-generate" :disabled="loopRunning || !online" @click="startLoop">▶ 开始闭环</button>
-            <button class="hs-btn hs-ghost" :disabled="!loopRunning" @click="stopLoop">■ 停止</button>
+        </section>
+
+        <!-- ④ 出图参数：设一次即可，默认折叠省空间 -->
+        <details class="sec sec-fold">
+          <summary class="sec-title">④ 出图参数（{{ gen.width }}×{{ genHeight }} · {{ gen.steps }} steps · CFG {{ gen.cfg }}）</summary>
+          <div class="sec-fold-body">
+            <div class="field">
+              <label class="field-label">{{ locale.stimulus.resolution }}（2:1）</label>
+              <div class="preset-btns">
+                <button
+                  v-for="p in RES_PRESETS"
+                  :key="p"
+                  class="preset-btn"
+                  :class="{ active: gen.width === p }"
+                  @click="gen.width = p"
+                >{{ p }}×{{ p / 2 }}</button>
+              </div>
+              <div class="row-group">
+                <input type="number" v-model.number="gen.width" class="ctrl-num seed-input" min="512" max="4096" step="64" @change="normalizeRes" />
+                <span class="seed-hint">× {{ genHeight }} {{ locale.stimulus.resHint }}</span>
+              </div>
+            </div>
+            <div class="two-col">
+              <div class="field">
+                <label class="field-label">{{ locale.stimulus.steps }}</label>
+                <input type="number" v-model.number="gen.steps" class="ctrl-num" min="1" max="100" />
+              </div>
+              <div class="field">
+                <label class="field-label">CFG</label>
+                <input type="number" v-model.number="gen.cfg" class="ctrl-num" min="0" max="30" step="0.1" />
+              </div>
+              <div class="field">
+                <label class="field-label">{{ locale.stimulus.sampler }}</label>
+                <select v-model="gen.sampler" class="ctrl-select">
+                  <option v-for="s in SAMPLERS" :key="s" :value="s">{{ s }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label">{{ locale.stimulus.scheduler }}</label>
+                <select v-model="gen.scheduler" class="ctrl-select">
+                  <option v-for="s in SCHEDULERS" :key="s" :value="s">{{ s }}</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label">{{ locale.stimulus.seed }}</label>
+              <div class="row-group">
+                <input type="number" v-model.number="seed" class="ctrl-num seed-input" min="-1" />
+                <button class="icon-btn" :title="locale.stimulus.randomSeed" @click="seed = -1">🎲</button>
+                <span class="seed-hint">{{ seed < 0 ? locale.stimulus.randomSeedHint : '' }}</span>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label">{{ locale.stimulus.negative }}</label>
+              <textarea v-model="negative" class="ctrl-textarea" rows="2" />
+            </div>
           </div>
+        </details>
+
+        <!-- 开始闭环 + 查看历史图片（同一行）-->
+        <div class="action-row">
+          <button
+            class="btn-generate"
+            :class="{ 'btn-stop': loopRunning }"
+            :disabled="!loopRunning && !online"
+            @click="toggleLoop"
+          >{{ loopRunning ? '■ 停止生成' : '▶ 开始生成图片' }}</button>
+          <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
+        </div>
+
+        <!-- ⑤ 闭环运行状态：指标 / 强度曲线 / 当前提示词 / 最新一张 -->
+        <section class="sec">
+          <div class="sec-title">⑤ 运行状态</div>
           <div class="loop-meta">
             <span>目标：{{ curEmotionObj?.zh }}</span>
             <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
@@ -108,173 +181,39 @@
             <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
             <polyline v-if="curvePath" :points="curvePath" class="curve-line" />
           </svg>
-          <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
-        </div>
-
-        <!-- 负向提示词 -->
-        <div class="field">
-          <label class="field-label">{{ locale.stimulus.negative }}</label>
-          <textarea v-model="negative" class="ctrl-textarea" rows="2" />
-        </div>
-
-        <!-- 种子 -->
-        <div class="field">
-          <label class="field-label">{{ locale.stimulus.seed }}</label>
-          <div class="row-group">
-            <input type="number" v-model.number="seed" class="ctrl-num seed-input" min="-1" />
-            <button class="icon-btn" :title="locale.stimulus.randomSeed" @click="seed = -1">🎲</button>
-            <span class="seed-hint">{{ seed < 0 ? locale.stimulus.randomSeedHint : '' }}</span>
-          </div>
-        </div>
-
-        <!-- 分辨率（强制 2:1 等距全景）-->
-        <div class="field">
-          <label class="field-label">{{ locale.stimulus.resolution }}（2:1）</label>
-          <div class="preset-btns">
-            <button
-              v-for="p in RES_PRESETS"
-              :key="p"
-              class="preset-btn"
-              :class="{ active: gen.width === p }"
-              @click="gen.width = p"
-            >{{ p }}×{{ p / 2 }}</button>
-          </div>
-          <div class="row-group">
-            <input type="number" v-model.number="gen.width" class="ctrl-num" min="512" max="4096" step="64" @change="normalizeRes" />
-            <span class="seed-hint">× {{ genHeight }} {{ locale.stimulus.resHint }}</span>
-          </div>
-        </div>
-
-        <!-- 步数 / CFG -->
-        <div class="two-col">
-          <div class="field">
-            <label class="field-label">{{ locale.stimulus.steps }}</label>
-            <input type="number" v-model.number="gen.steps" class="ctrl-num" min="1" max="100" />
-          </div>
-          <div class="field">
-            <label class="field-label">CFG</label>
-            <input type="number" v-model.number="gen.cfg" class="ctrl-num" min="0" max="30" step="0.1" />
-          </div>
-        </div>
-
-        <!-- 采样器 / 调度器 -->
-        <div class="two-col">
-          <div class="field">
-            <label class="field-label">{{ locale.stimulus.sampler }}</label>
-            <select v-model="gen.sampler" class="ctrl-select">
-              <option v-for="s in SAMPLERS" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </div>
-          <div class="field">
-            <label class="field-label">{{ locale.stimulus.scheduler }}</label>
-            <select v-model="gen.scheduler" class="ctrl-select">
-              <option v-for="s in SCHEDULERS" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- 生成按钮 + 查看历史图片（同一行）-->
-        <div class="action-row">
-          <button class="btn-generate" :disabled="generating || !currentPrompt" @click="generate">
-            <span v-if="generating">
-              {{ locale.stimulus.generating }}
-              <span v-if="progress.max > 0"> · {{ progress.current }}/{{ progress.max }}</span>
-            </span>
-            <span v-else>{{ locale.stimulus.generate }}</span>
-          </button>
-          <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
-        </div>
-
-        <!-- 进度条 -->
-        <div v-if="generating" class="progress-wrap">
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
-          </div>
-          <span class="progress-node">{{ progress.node }}</span>
-        </div>
-
-        <!-- 状态消息 -->
-        <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
-
-        <!-- 本次生成 -->
-        <div v-if="results.length > 0" class="result-area">
-          <div class="result-header">
-            <span class="result-label">{{ locale.stimulus.result }}（{{ results.length }}）</span>
-            <div class="result-actions">
-              <label class="dwell-label">
-                {{ locale.stimulus.dwell }}
-                <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
-              </label>
-              <button class="use-emotion-btn" @click="startSession()">{{ locale.stimulus.sessionStart }}</button>
-              <button class="clear-btn" @click="results = []">✕</button>
-            </div>
-          </div>
-          <div class="result-grid">
-            <div v-for="(img, i) in results" :key="i" class="result-item">
-              <img :src="img.url" class="result-img" :title="locale.stimulus.fullscreen" @click="panoSrc = img.url" />
-              <span class="emo-tag">{{ img.label }}</span>
-              <a :href="img.url" download class="dl-btn" :title="locale.stimulus.download">↓</a>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 批量生成刺激图集 ── -->
-        <div class="batch-box">
-          <div class="batch-title">🗂 {{ locale.stimulus.batchTitle }}</div>
-          <p class="batch-desc">{{ locale.stimulus.batchDesc }}</p>
-
-          <div class="field">
-            <label class="field-label">{{ locale.stimulus.batchEmotions }}</label>
-            <div class="preset-btns">
-              <button
-                v-for="e in emotions"
-                :key="e.key"
-                class="preset-btn"
-                :class="{ active: batch.emotions.includes(e.key) }"
-                :disabled="batch.running"
-                @click="toggleBatchEmotion(e.key)"
-              >{{ e.label }}</button>
-            </div>
-          </div>
-
-          <div class="two-col">
-            <div class="field">
-              <label class="field-label">{{ locale.stimulus.batchPerEmotion }}</label>
-              <input type="number" v-model.number="batch.perEmotion" class="ctrl-num" min="1" max="500" :disabled="batch.running" />
-            </div>
-            <div class="field">
-              <label class="field-label">{{ locale.stimulus.batchFolder }}</label>
-              <input type="text" v-model.trim="batch.folder" class="ctrl-textarea batch-folder" :disabled="batch.running" />
-            </div>
-          </div>
-
-          <p class="batch-hint">
-            {{ locale.stimulus.batchSaveHint }}
-            <code>image/{{ batch.folder ? batch.folder + '/' : '' }}&lt;emotion&gt;/</code>
-          </p>
-
-          <button
-            v-if="!batch.running"
-            class="btn-generate"
-            :disabled="batch.emotions.length === 0 || batch.perEmotion < 1"
-            @click="startBatch"
-          >
-            {{ locale.stimulus.batchStart }} ({{ batch.emotions.length * batch.perEmotion }})
-          </button>
-          <button v-else class="btn-stop" @click="stopBatch">■ {{ locale.stimulus.batchStop }}</button>
-
-          <div v-if="batch.running || batch.done > 0" class="batch-progress">
+          <div v-if="loopRunning && progress.max > 0" class="progress-wrap">
             <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: batchPct + '%' }"></div>
+              <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
             </div>
-            <div class="batch-stat">
-              <span>{{ batch.done }} / {{ batch.total }}</span>
-              <span v-if="batch.currentEmotion" class="cur">· {{ emoLabel(batch.currentEmotion) }}</span>
-              <span class="ok">✓ {{ batch.ok }}</span>
-              <span v-if="batch.fail > 0" class="fail">✗ {{ batch.fail }}</span>
+            <span class="progress-node">{{ progress.current }}/{{ progress.max }}</span>
+          </div>
+          <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
+          <p v-if="dbWarn" class="status-msg msg-error">{{ dbWarn }}</p>
+          <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
+          <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" readonly
+                    :placeholder="'当前提示词由 DeepSeek 按情绪+场景动态生成（开始闭环后显示）'" />
+          <div v-if="results.length > 0" class="result-area">
+            <div class="result-header">
+              <span class="result-label">{{ locale.stimulus.result }}（{{ results.length }}）</span>
+              <div class="result-actions">
+                <label class="dwell-label">
+                  {{ locale.stimulus.dwell }}
+                  <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
+                </label>
+                <button class="use-emotion-btn" @click="startSession()">{{ locale.stimulus.sessionStart }}</button>
+                <button class="clear-btn" @click="results = []">✕</button>
+              </div>
+            </div>
+            <div class="result-grid">
+              <div v-for="(img, i) in results" :key="i" class="result-item">
+                <img :src="img.url" class="result-img" :title="locale.stimulus.fullscreen" @click="panoSrc = img.url" />
+                <span class="emo-tag">{{ img.label }}</span>
+                <a :href="img.url" download class="dl-btn" :title="locale.stimulus.download">↓</a>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
+
       </template>
       </div>
 
@@ -372,7 +311,7 @@ import {
   SCHEDULERS,
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
-import { randomVrStimulus, saveStimulusImage } from '../api/vrStimulus.js'
+import { saveStimulusImage, reportStimulusProgress } from '../api/vrStimulus.js'
 import { getHeadsetStatus, connectHeadset, fetchHeadsetView } from '../api/headset.js'
 import { fetchFeaLatest, startSession as startAffectSession, stopSession as stopAffectSession, recordImage, generateScenePrompt } from '../api/affect.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
@@ -384,98 +323,19 @@ const props = defineProps({
 
 // 复用已放入 ComfyUI 工作流目录的 360 全景工作流
 const STIMULUS_WORKFLOW = 'qwen360_pano.json'
-// 全景触发词前缀（LoRA 需要 equirectangular 类关键词）
-const PANO_PREFIX =
-  '360 panorama, equirectangular projection, full spherical seamless panorama, photograph, '
+// 提示词由 DeepSeek 生成（其 system prompt 已要求以 "equirectangular 360 panorama," 开头）
 const DEFAULT_NEG =
   'lowres, worst quality, blurry, distorted, polar distortion, poles warping, watermark, text, people, person, human'
 
-// 7 类情绪 → 诱导该情绪的 360° 场景库（每类 10 条，英文喂模型；下拉选择）
+// 7 类情绪（诱导目标）——具体场景改由下方「时间/地点/任务/事情」四要素组合，不再逐情绪预置
 const EMOTIONS = [
-  { key: 'happy', zh: '开心', scenes: [
-    'sunny tropical beach paradise, turquoise water, palm trees, bright cheerful daylight',
-    'vast blooming flower field under a clear blue sky, butterflies, warm sunshine',
-    'colorful amusement park with a carousel and floating balloons, festive joyful atmosphere',
-    'cozy sunlit green meadow with playful puppies, golden warm light',
-    'vibrant festival at night with fireworks and confetti, celebration, joyful glowing lights',
-    'children flying colorful kites on a breezy sunny hilltop, cheerful joyful air',
-    'warm cafe terrace with fairy lights and blooming flowers, bright happy afternoon',
-    'radiant rainbow arching over rolling green hills after gentle rain, hopeful light',
-    'lively beach bonfire at golden sunset, sparkling warmth, celebratory glow',
-    'sunlit orchard heavy with ripe fruit, singing birds, abundant joyful spring',
-  ] },
-  { key: 'sad', zh: '悲伤', scenes: [
-    'lonely rainy city street at dusk, wet empty pavement, grey melancholic mood',
-    'abandoned empty room with dim light and floating dust, nostalgic loneliness',
-    'foggy grey cemetery under bare trees, somber sorrowful atmosphere',
-    'desolate autumn forest with falling withered leaves, overcast heavy sky',
-    'empty quiet hospital corridor at night, cold blue melancholic light',
-    'single wilting flower on a rain-streaked windowsill, grey quiet sorrow',
-    'empty swing swaying in a deserted foggy playground, lonely dusk',
-    'faded old photographs scattered on a dusty floor, nostalgic aching silence',
-    'weathered empty bench facing a cold grey sea under heavy clouds, mournful solitude',
-    'dim candle burning low in a bare shadowed room, melancholic fading light',
-  ] },
-  { key: 'angry', zh: '愤怒', scenes: [
-    'chaotic gridlock traffic jam, glaring red brake lights, frustrating congestion',
-    'stormy red sky over a burning industrial wasteland, intense oppressive atmosphere',
-    'ruined war-torn city street, rubble and thick smoke, tense hostile mood',
-    'raging wildfire consuming a dark forest, fierce red flames surrounding, oppressive heat',
-    'crowded overwhelming subway platform at rush hour, claustrophobic irritating crush',
-    'violent thunderstorm smashing a jagged coastline, furious crashing waves',
-    'cracked scorched desert under a blood-red oppressive sky, seething heat',
-    'shattered glass and sparks in a dark industrial alley, aggressive tension',
-    'erupting volcano spewing molten lava and ash, raging destructive fury',
-    'tangled barbed wire against a smoldering crimson horizon, hostile menace',
-  ] },
-  { key: 'surprise', zh: '惊讶', scenes: [
-    'sudden glowing magical portal opening in a mystical forest, dazzling light burst',
-    'surreal floating islands in the sky with cascading waterfalls, breathtaking unexpected vista',
-    'spectacular cosmic aurora and an exploding galaxy overhead, awe-inspiring space',
-    'giant whimsical creature emerging unexpectedly from the clouds, astonishing scene',
-    'fantastical crystal cave suddenly revealed, sparkling with unexpected wonder',
-    'meteor shower suddenly streaking across a vast starry desert sky, gasping wonder',
-    'hidden waterfall abruptly revealed behind parting jungle mist, astonishing discovery',
-    'thousands of birds bursting into the sky at once, startling spectacle',
-    'bioluminescent ocean suddenly glowing electric blue at night, unexpected magic',
-    'towering ancient ruins emerging from dissolving fog, breathtaking revelation',
-  ] },
-  { key: 'fear', zh: '恐惧', scenes: [
-    'dark haunted forest at midnight, twisted trees, eerie fog, menacing shadows',
-    'abandoned decaying asylum hallway, flickering lights, horror atmosphere',
-    'edge of a dizzying tall cliff, vertigo, deep dark abyss below',
-    'deep pitch-black cave with an unknown lurking presence, claustrophobic dread',
-    'creepy foggy graveyard at night with looming tombstones, chilling terror',
-    'narrow flooded tunnel with rising black water and distant echoes, mounting dread',
-    'dense dark woods with glowing unseen eyes between the trees, creeping terror',
-    'derelict rusted ship interior tilting in the dark, suffocating trapped fear',
-    'endless foggy staircase descending into pitch black, vertiginous unknown',
-    'abandoned carnival at night with broken rides and eerie silence, sinister unease',
-  ] },
-  { key: 'disgust', zh: '厌恶', scenes: [
-    'overflowing garbage dump with rotting waste, swarming flies, foul filthy scene',
-    'dirty clogged sewer tunnel with grimy sludge, repulsive decay',
-    'moldy abandoned kitchen with rotten spoiled food, revolting filth',
-    'swarm of insects crawling over decaying matter, nauseating scene',
-    'polluted toxic swamp with murky slime and floating refuse, disgusting atmosphere',
-    'rotting fruit and writhing maggots on a filthy counter, stomach-turning decay',
-    'slime-covered flooded sewer with foul brown sludge, repulsive stench',
-    'pile of spoiled meat swarming with flies in a grimy alley, nauseating filth',
-    'stagnant green pond choked with scum and dead fish, revolting rot',
-    'mold-covered damp basement with dripping grime and cobwebs, sickening squalor',
-  ] },
-  { key: 'neutral', zh: '平静', scenes: [
-    'plain minimalist empty white studio, soft even light, calm neutral space',
-    'quiet serene zen garden with raked sand and stones, tranquil balance',
-    'calm empty library reading room, soft daylight, peaceful stillness',
-    'gentle misty lake at dawn, flat calm water, serene neutral mood',
-    'simple tidy modern living room, soft neutral daylight, relaxed calm',
-    'plain grey concrete room with soft flat lighting, calm featureless space',
-    'still empty subway platform in even daylight, quiet neutral calm',
-    'flat overcast beach with smooth grey sand and calm sea, tranquil emptiness',
-    'simple wooden desk in a bare room with soft window light, relaxed neutral',
-    'gentle rolling green field under a mild cloudy sky, serene ordinary calm',
-  ] },
+  { key: 'happy', zh: '开心' },
+  { key: 'sad', zh: '悲伤' },
+  { key: 'angry', zh: '愤怒' },
+  { key: 'surprise', zh: '惊讶' },
+  { key: 'fear', zh: '恐惧' },
+  { key: 'disgust', zh: '厌恶' },
+  { key: 'neutral', zh: '平静' },
 ]
 
 // ── 连接状态 ──
@@ -506,7 +366,7 @@ const seed            = ref(-1)
 // ── 生成参数（默认取自 qwen360_pano 工作流）──
 const gen = reactive({
   width: 2048,        // 高度恒为 width/2（强制 2:1 等距全景）
-  steps: 20,
+  steps: 15,
   cfg: 3.5,
   sampler: 'euler',
   scheduler: 'simple',
@@ -526,32 +386,56 @@ const emotions = computed(() =>
 )
 const curEmotionObj = computed(() => EMOTIONS.find((e) => e.key === selectedEmotion.value))
 
-// 优先从 CSV 场景库随机抽（128/情绪）；离线或加载失败时退回内置场景
-async function pickPrompt() {
-  try {
-    const { prompt } = await randomVrStimulus(selectedEmotion.value)
-    currentPrompt.value = prompt
-  } catch {
-    const list = curEmotionObj.value?.scenes ?? []
-    if (list.length === 0) return
-    currentPrompt.value = PANO_PREFIX + list[Math.floor(Math.random() * list.length)]
-  }
-}
-function selectEmotion(key) {
-  selectedEmotion.value = key
-  selectedSceneIdx.value = 0
-  pickPrompt()
-}
-pickPrompt() // 初始填一条
+// 当前页语言：zh.js 的 langSwitchPath=/jp、ja.js 的=/cn
+const lang = computed(() => (props.locale.langSwitchPath === '/cn' ? 'ja' : 'zh'))
+const optLabel = (s) => (s ? (s[lang.value] || s.zh) : '')
 
-// ── 场景下拉：选中即把该场景（带全景前缀）填入提示词框 ──
-const curScenes = computed(() => curEmotionObj.value?.scenes ?? [])
-const selectedSceneIdx = ref(0)
-function applyScene() {
-  const s = curScenes.value[selectedSceneIdx.value]
-  if (s) currentPrompt.value = PANO_PREFIX + s
+// ── 场景四要素（时间/地点/任务/事情），各 10 预设；不含具体成品场景，组合后喂 DeepSeek ──
+const TIME_PRESETS = [
+  { zh: '清晨', ja: '早朝' }, { zh: '正午', ja: '正午' }, { zh: '黄昏', ja: '夕暮れ' },
+  { zh: '深夜', ja: '深夜' }, { zh: '雨天', ja: '雨の日' }, { zh: '雪天', ja: '雪の日' },
+  { zh: '春日', ja: '春の日' }, { zh: '盛夏', ja: '真夏' }, { zh: '秋日', ja: '秋の日' },
+  { zh: '暴风雨夜', ja: '嵐の夜' },
+]
+const PLACE_PRESETS = [
+  { zh: '海滩', ja: 'ビーチ' }, { zh: '森林', ja: '森' }, { zh: '城市街道', ja: '街の通り' },
+  { zh: '山顶', ja: '山頂' }, { zh: '室内房间', ja: '室内' }, { zh: '湖畔', ja: '湖畔' },
+  { zh: '沙漠', ja: '砂漠' }, { zh: '花园', ja: '庭園' }, { zh: '地铁站', ja: '駅' },
+  { zh: '废墟', ja: '廃墟' },
+]
+const TASK_PRESETS = [
+  { zh: '散步', ja: '散歩' }, { zh: '休息', ja: '休憩' }, { zh: '探索', ja: '探索' },
+  { zh: '庆祝', ja: 'お祝い' }, { zh: '独处', ja: '一人で過ごす' }, { zh: '奔跑', ja: '走る' },
+  { zh: '眺望远方', ja: '遠くを眺める' }, { zh: '等待', ja: '待つ' }, { zh: '逃离', ja: '逃げる' },
+  { zh: '沉思', ja: '物思いにふける' },
+]
+const EVENT_PRESETS = [
+  { zh: '烟花绽放', ja: '花火が上がる' }, { zh: '日出', ja: '日の出' }, { zh: '暴风来临', ja: '嵐が来る' },
+  { zh: '花朵盛开', ja: '花が咲く' }, { zh: '极光出现', ja: 'オーロラが現れる' }, { zh: '大雨倾盆', ja: '土砂降り' },
+  { zh: '落叶纷飞', ja: '落ち葉が舞う' }, { zh: '火焰蔓延', ja: '炎が広がる' }, { zh: '雾气弥漫', ja: '霧が立ち込める' },
+  { zh: '万物寂静', ja: '静寂に包まれる' },
+]
+const SCENE_DIMS = [
+  { key: 'time',  zh: '时间', ja: '時間',   list: TIME_PRESETS },
+  { key: 'place', zh: '地点', ja: '場所',   list: PLACE_PRESETS },
+  { key: 'task',  zh: '任务', ja: 'タスク', list: TASK_PRESETS },
+  { key: 'event', zh: '事情', ja: '出来事', list: EVENT_PRESETS },
+]
+const dimLabel = (dim) => (lang.value === 'ja' ? dim.ja : dim.zh)
+const sel = reactive({ time: 0, place: 0, task: 0, event: 0 })
+// 四要素组合成基础场景文本（当前语言），喂给 DeepSeek 生成提示词
+const composedScene = () =>
+  [optLabel(TIME_PRESETS[sel.time]), optLabel(PLACE_PRESETS[sel.place]),
+   optLabel(TASK_PRESETS[sel.task]), optLabel(EVENT_PRESETS[sel.event])]
+    .filter(Boolean).join('，')
+
+function selectEmotion(key) { selectedEmotion.value = key }
+function randomScene() {
+  sel.time  = Math.floor(Math.random() * TIME_PRESETS.length)
+  sel.place = Math.floor(Math.random() * PLACE_PRESETS.length)
+  sel.task  = Math.floor(Math.random() * TASK_PRESETS.length)
+  sel.event = Math.floor(Math.random() * EVENT_PRESETS.length)
 }
-watch(selectedEmotion, () => { selectedSceneIdx.value = 0 })
 
 // ── 动态情绪闭环采集（DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈）──
 const LOOP_MODES = [
@@ -567,6 +451,7 @@ const measureWindowSec = ref(6)
 const loopRunning = ref(false)
 const loopStep = ref(0)
 const loopStatus = ref('')
+const dbWarn = ref('')                 // 入库失败提示（闭环照跑，但要提示）
 const loopSessionId = ref('')
 const latestIntensity = ref(0)
 const intensitySeries = reactive([])   // 目标情绪强度随时间的曲线点 [{ v }]
@@ -599,7 +484,7 @@ function emotionsEnFromLatest() {
 function computeDirective(step, measured) {
   const emo = selectedEmotion.value
   const T = Number(targetIntensity.value) || 0.6
-  let level, directive, sceneIdx = selectedSceneIdx.value
+  let level, directive
   if (loopMode.value === 'amplify') {
     level = Math.min(5, 1 + step)
     directive = `intensify strongly toward peak ${emo}; render at intensity level ${level}/5, stronger and more extreme than the previous image`
@@ -615,10 +500,21 @@ function computeDirective(step, measured) {
     directive = `dose-response ladder: render ${emo} at a fixed dose level ${level}/5`
   } else {
     level = 1 + Math.floor(Math.random() * 5)
-    sceneIdx = Math.floor(Math.random() * Math.max(1, curScenes.value.length))
+    randomScene()   // 随机模式：随机换四要素组合
     directive = `render ${emo} at a random intensity level ${level}/5`
   }
-  return { directive, level, sceneText: curScenes.value[sceneIdx] || '', sceneIdx }
+  return { directive, level, sceneText: composedScene() }
+}
+
+// 把「下一张」的生成进度同步给后端，头显 UI 轮询后显示进度条
+function pushProgress(running, note) {
+  reportStimulusProgress({
+    running,
+    current: running ? progress.current : 0,
+    max: running ? progress.max : 0,
+    step: loopStep.value + 1,
+    note,
+  })
 }
 
 // 精简版单张生成：返回图片 URL（复用工作流/WS/history 兜底），不改动单张生成状态
@@ -641,7 +537,10 @@ function genImageUrl(positive, negativeText) {
         sock.addEventListener('message', (e) => {
           let m; try { m = JSON.parse(e.data) } catch { return }
           const { type, data } = m
-          if (type === 'progress' && data?.prompt_id === prompt_id) { progress.current = data.value; progress.max = data.max }
+          if (type === 'progress' && data?.prompt_id === prompt_id) {
+            progress.current = data.value; progress.max = data.max
+            pushProgress(true, 'sampling')     // 同步给头显里的进度条
+          }
           if ((type === 'execution_success' && data?.prompt_id === prompt_id) ||
               (type === 'executing' && data?.node === null && data?.prompt_id === prompt_id)) done(prompt_id)
           if (type === 'execution_error' && data?.prompt_id === prompt_id && !settled) {
@@ -676,28 +575,38 @@ async function pollFeaOnce() {
 }
 
 async function runLoop() {
+  let fails = 0                       // 连续失败计数：偶发抖动跳过重试，连续 3 次才停
   while (!loopAbort) {
     const measured = latestIntensity.value
-    const { directive, level, sceneText, sceneIdx } = computeDirective(loopStep.value, measured)
-    if (loopMode.value === 'random') selectedSceneIdx.value = sceneIdx
+    const { directive, level, sceneText } = computeDirective(loopStep.value, measured)
     loopStatus.value = `生成中…（第 ${loopStep.value + 1} 张 · level ${level}/5）`
-    let prompt
+    progress.current = 0
+    progress.max = 0
+    pushProgress(true, 'prompt')          // 提示词阶段：头显显示「准备中」
+    let prompt, url
     try {
       prompt = await generateScenePrompt(selectedEmotion.value, sceneText, directive)
-    } catch (e) { loopStatus.value = `DeepSeek 失败：${e.message}`; break }
-    if (loopAbort) break
-    let url
-    try {
+      if (loopAbort) break
       url = await genImageUrl(prompt.positive, prompt.negative || DEFAULT_NEG)
-    } catch (e) { loopStatus.value = `生成失败：${e.message}`; break }
+    } catch (e) {
+      if (++fails >= 3) { loopStatus.value = `连续失败 ${fails} 次，已停止：${e.message}`; break }
+      loopStatus.value = `第 ${fails} 次失败（${e.message}），2s 后重试…`
+      await sleep(2000)
+      continue
+    }
     if (loopAbort || !url) break
+    fails = 0
     currentPrompt.value = prompt.positive
     results.value = [{ url, emotion: selectedEmotion.value, label: curEmotionObj.value?.zh }]
     // 存盘 + 推头显天空盒
     let savedUrl = url
+    let savedPath = ''                      // 磁盘相对路径 image/<emotion>/<时间戳>.png，入库用
     try {
       const s = await saveStimulusImage(url, selectedEmotion.value, 'stimulus', { show: true })
-      if (s.path) savedUrl = `/api/stimulus/files/${s.path.replace(/^image\//, '')}`
+      if (s.path) {
+        savedPath = s.path.replace(/\\/g, '/')
+        savedUrl = `/api/stimulus/files/${savedPath.replace(/^image\//, '')}`
+      }
     } catch { /* 忽略存盘失败 */ }
     // 记录刺激事件（含调制元数据，供后期预测分析）
     try {
@@ -708,25 +617,32 @@ async function runLoop() {
         emotions: emotionsEnFromLatest(),
         prompt: prompt.positive, negative: prompt.negative, scene: prompt.scene, reasoning: prompt.reasoning,
         image_url: savedUrl,
+        image_path: savedPath,
         reaction: {
           mode: loopMode.value, level,
           target_intensity: Number(targetIntensity.value) || 0.6,
           measured_intensity: measured, step: loopStep.value, page: 'stimulus',
         },
       })
-    } catch { /* 存储失败不中断闭环 */ }
+      dbWarn.value = ''
+    } catch (e) {
+      dbWarn.value = `第 ${loopStep.value + 1} 张入库失败：${e.message}`   // 不中断闭环，但要让人看见
+    }
     loopStep.value++
     loopStatus.value = `已展示第 ${loopStep.value} 张（level ${level}/5）· 采集情绪反应中…`
+    pushProgress(false, 'watching')       // 观看窗内头显不显示进度条
     // 观看/测量窗：让 FEA 在当前图上累积后再生成下一张
     await sleep(Math.max(2, Number(measureWindowSec.value) || 6) * 1000)
   }
   loopRunning.value = false
+  pushProgress(false, 'idle')             // 循环退出（含出错退出）也要清掉头显进度条
 }
 
 async function startLoop() {
   if (loopRunning.value) return
   if (!online.value) { loopStatus.value = 'ComfyUI 未连接'; return }
   loopStatus.value = ''
+  dbWarn.value = ''
   try {
     const r = await startAffectSession(subjectId.value || 'anon', {
       page: 'stimulus', mode: loopMode.value,
@@ -743,12 +659,18 @@ async function startLoop() {
   runLoop()
 }
 
+function toggleLoop() {
+  if (loopRunning.value) stopLoop()
+  else startLoop()
+}
+
 function stopLoop() {
   loopAbort = true
   loopRunning.value = false
   if (feaTimer) { clearInterval(feaTimer); feaTimer = null }
   if (loopSessionId.value) { stopAffectSession(loopSessionId.value).catch(() => {}); loopSessionId.value = '' }
   loopStatus.value = (loopStatus.value || '') + ' — 已停止'
+  pushProgress(false, 'stopped')
 }
 
 // 情绪强度曲线（内联 SVG polyline，0–1 → 60px 高）
@@ -769,9 +691,8 @@ onUnmounted(() => {
   if (loopSessionId.value) stopAffectSession(loopSessionId.value).catch(() => {})
 })
 
-// ── 生成流程 ──
-const generating = ref(false)
-const progress   = reactive({ current: 0, max: 0, node: '' })
+// ── 生成流程（仅闭环使用）──
+const progress   = reactive({ current: 0, max: 0 })
 const statusMsg  = ref('')
 const statusMsgClass = ref('')
 const results    = ref([]) // { url, emotion, label }
@@ -837,7 +758,7 @@ async function pollHeadsetViewLoop() {
       if (prev) URL.revokeObjectURL(prev)     // 顺序循环无重叠，撤销上一张安全
     }
   }
-  if (headsetViewAlive) headsetViewTimer = setTimeout(pollHeadsetViewLoop, 300)
+  if (headsetViewAlive) headsetViewTimer = setTimeout(pollHeadsetViewLoop, 100)
 }
 
 onUnmounted(() => {
@@ -849,9 +770,6 @@ onUnmounted(() => {
 const progressPct = computed(() =>
   progress.max > 0 ? Math.round((progress.current / progress.max) * 100) : 0,
 )
-
-let ws = null
-let pollTimer = null
 
 async function buildWorkflow({ positive, seedVal, negativeText } = {}) {
   let raw
@@ -879,87 +797,6 @@ async function buildWorkflow({ positive, seedVal, negativeText } = {}) {
   return api
 }
 
-// 仅展示「本次生成」（不再累积历史，历史见「查看历史图片」），并异步存盘到 image/<emotion>/
-function registerResults(urls, emo, label) {
-  results.value = urls.map((u) => ({ url: u, emotion: emo, label }))
-  // 存盘；第一张同时 show=true，后端标记为「当前」→ Quest Pro 上的 Unity 立即贴到全景天空盒。
-  urls.forEach((u, i) => saveStimulusImage(u, emo, '', { show: i === 0 }).catch(() => {}))
-}
-
-async function generate() {
-  if (generating.value || !currentPrompt.value) return
-
-  generating.value = true
-  statusMsg.value  = ''
-  progress.current = 0
-  progress.max     = 0
-  progress.node    = ''
-
-  const clientId = makeClientId()
-  const emo   = selectedEmotion.value
-  const label = props.locale.emotionMap[curEmotionObj.value?.zh] ?? emo
-
-  try {
-    const workflow = await buildWorkflow()
-    ws = openProgressWS(clientId)
-    const { prompt_id } = await queuePrompt(clientId, workflow)
-    await waitForCompletion(ws, prompt_id, emo, label)
-  } catch (err) {
-    statusMsg.value      = `${props.locale.stimulus.error}：${err.message}`
-    statusMsgClass.value = 'msg-error'
-    generating.value     = false
-    closeWS()
-  }
-}
-
-function waitForCompletion(socket, promptId, emo, label) {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    socket.addEventListener('message', async (e) => {
-      let msg
-      try { msg = JSON.parse(e.data) } catch { return }
-      const { type, data } = msg
-
-      if (type === 'progress' && data?.prompt_id === promptId) {
-        progress.current = data.value
-        progress.max     = data.max
-        progress.node    = data.node ?? ''
-      }
-      if (type === 'executing' && data?.prompt_id === promptId) {
-        progress.node = data.node ?? ''
-      }
-      if (
-        !settled &&
-        ((type === 'execution_success' && data?.prompt_id === promptId) ||
-         (type === 'executing' && data?.node === null && data?.prompt_id === promptId))
-      ) {
-        settled = true
-        try {
-          const urls = await collectImages(promptId)
-          registerResults(urls, emo, label)
-          statusMsg.value      = props.locale.stimulus.success
-          statusMsgClass.value = 'msg-ok'
-        } catch (err) {
-          statusMsg.value      = `${props.locale.stimulus.error}：${err.message}`
-          statusMsgClass.value = 'msg-error'
-        } finally {
-          generating.value = false
-          closeWS()
-          resolve()
-        }
-      }
-      if (type === 'execution_error' && data?.prompt_id === promptId) {
-        reject(new Error(data?.exception_message ?? 'execution error'))
-      }
-    })
-
-    socket.addEventListener('error', () => reject(new Error('WebSocket error')))
-    socket.addEventListener('close', () => {
-      if (generating.value) pollHistory(promptId, emo, label, resolve, reject)
-    })
-  })
-}
-
 async function collectImages(promptId) {
   const history = await getHistory(promptId)
   const entry = history[promptId]
@@ -973,105 +810,7 @@ async function collectImages(promptId) {
   return urls
 }
 
-function pollHistory(promptId, emo, label, resolve, reject) {
-  let attempts = 0
-  pollTimer = setInterval(async () => {
-    attempts++
-    try {
-      const urls = await collectImages(promptId)
-      if (urls.length > 0) {
-        clearInterval(pollTimer)
-        registerResults(urls, emo, label)
-        statusMsg.value      = props.locale.stimulus.success
-        statusMsgClass.value = 'msg-ok'
-        generating.value     = false
-        resolve()
-      }
-    } catch { /* 继续轮询 */ }
-    if (attempts >= 90) {
-      clearInterval(pollTimer)
-      reject(new Error('timeout waiting for result'))
-    }
-  }, 2000)
-}
-
-function closeWS() {
-  if (ws) { ws.close(); ws = null }
-}
-
-// ── 批量生成刺激图集 ──
-const batch = reactive({
-  emotions: EMOTIONS.map((e) => e.key),
-  perEmotion: 20,
-  folder: '',
-  running: false,
-  done: 0,
-  total: 0,
-  ok: 0,
-  fail: 0,
-  currentEmotion: '',
-})
-
-const batchPct = computed(() =>
-  batch.total > 0 ? Math.round((batch.done / batch.total) * 100) : 0,
-)
 const emoLabel = (key) => emotions.value.find((e) => e.key === key)?.label ?? key
-
-function toggleBatchEmotion(key) {
-  if (batch.running) return
-  const i = batch.emotions.indexOf(key)
-  if (i >= 0) batch.emotions.splice(i, 1)
-  else batch.emotions.push(key)
-}
-
-let batchStop = false
-let batchWs = null
-
-async function startBatch() {
-  if (batch.running || batch.emotions.length === 0 || batch.perEmotion < 1) return
-  batchStop = false
-  batch.running = true
-  batch.done = 0; batch.ok = 0; batch.fail = 0
-  batch.total = batch.emotions.length * batch.perEmotion
-  batch.currentEmotion = ''
-  statusMsg.value = ''
-  progress.current = 0; progress.max = 0
-
-  const clientId = makeClientId()
-  batchWs = openProgressWS(clientId)
-  const folder = batch.folder || ''
-
-  try {
-    for (const emo of batch.emotions) {
-      if (batchStop) break
-      batch.currentEmotion = emo
-      for (let i = 0; i < batch.perEmotion; i++) {
-        if (batchStop) break
-        try {
-          const { prompt } = await randomVrStimulus(emo)
-          const workflow = await buildWorkflow({ positive: prompt, seedVal: -1 })
-          const { prompt_id } = await queuePrompt(clientId, workflow)
-          await waitForPrompt(batchWs, prompt_id)
-          const urls = await collectImages(prompt_id)
-          await Promise.all(urls.map((u) => saveStimulusImage(u, emo, folder)))
-          batch.ok++
-        } catch {
-          batch.fail++
-        } finally {
-          batch.done++
-        }
-      }
-    }
-    statusMsg.value      = batchStop ? props.locale.stimulus.batchStopped : props.locale.stimulus.batchDone
-    statusMsgClass.value = batchStop ? 'msg-error' : 'msg-ok'
-  } finally {
-    batch.running = false
-    batch.currentEmotion = ''
-    if (batchWs) { batchWs.close(); batchWs = null }
-  }
-}
-
-function stopBatch() { batchStop = true }
 
 // ── 呈现序列（诱导 session 播放器）──
 // 按情绪分组轮播已生成的刺激图，每张停留 dwell 秒，用于真实采集时诱导受试者表情
@@ -1162,59 +901,6 @@ async function clearHistoryEmotion() {
   } catch { /* 忽略 */ }
 }
 
-// 等待单个 prompt 完成；WS 漏消息时靠 history 轮询兜底
-function waitForPrompt(socket, promptId) {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let poll = null
-    function cleanup() {
-      socket.removeEventListener('message', onMsg)
-      if (poll) clearInterval(poll)
-    }
-    function finish() {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve()
-    }
-    function onMsg(e) {
-      let msg
-      try { msg = JSON.parse(e.data) } catch { return }
-      const { type, data } = msg
-      if (type === 'progress' && data?.prompt_id === promptId) {
-        progress.current = data.value
-        progress.max     = data.max
-      }
-      if (
-        (type === 'execution_success' && data?.prompt_id === promptId) ||
-        (type === 'executing' && data?.node === null && data?.prompt_id === promptId)
-      ) {
-        finish()
-      }
-      if (type === 'execution_error' && data?.prompt_id === promptId) {
-        if (settled) return
-        settled = true
-        cleanup()
-        reject(new Error(data?.exception_message ?? 'execution error'))
-      }
-    }
-    socket.addEventListener('message', onMsg)
-    let pollN = 0
-    poll = setInterval(async () => {
-      if (++pollN > 200) {          // ~10min 上限：Comfy 崩/节点错时不再无限轮询
-        if (settled) return
-        settled = true
-        cleanup()
-        reject(new Error('轮询超时：ComfyUI 未返回结果'))
-        return
-      }
-      try {
-        const h = await getHistory(promptId)
-        if (h[promptId]?.outputs) finish()
-      } catch { /* 继续轮询 */ }
-    }, 3000)
-  })
-}
 
 // ── 生命周期 ──
 let connTimer = null
@@ -1227,10 +913,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   clearInterval(connTimer)
-  clearInterval(pollTimer)
-  closeWS()
-  batchStop = true
-  if (batchWs) { batchWs.close(); batchWs = null }
   clearTimeout(sessionTimer)
 })
 </script>
@@ -1307,10 +989,25 @@ onUnmounted(() => {
 }
 .view-col-title { font-size: 0.82rem; font-weight: 700; color: var(--color-text); letter-spacing: 0.04em; }
 
-.panel-desc {
-  font-size: 0.75rem; line-height: 1.5;
-  color: var(--color-text-muted);
+/* ── 左栏分区：每步一个卡片，标题带序号 ── */
+.sec {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-2);
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
 }
+.sec-title {
+  font-size: 0.78rem; font-weight: 700;
+  color: var(--color-text); letter-spacing: 0.04em;
+}
+.sec-fold { gap: 0; }
+.sec-fold > summary { cursor: pointer; list-style: none; }
+.sec-fold > summary::-webkit-details-marker { display: none; }
+.sec-fold > summary::before { content: '▸ '; color: var(--color-text-muted); }
+.sec-fold[open] > summary::before { content: '▾ '; }
+.sec-fold-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.no-mb { margin-bottom: 0; }
 
 .offline-box {
   flex: 1; display: flex; flex-direction: column;
@@ -1452,31 +1149,6 @@ onUnmounted(() => {
 
 /* ── 两列 & 批量 ── */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.batch-folder { min-height: 0; height: 34px; resize: none; }
-
-.batch-box {
-  display: flex; flex-direction: column; gap: 10px;
-  margin-top: 6px; padding: 14px;
-  border: 1px dashed var(--color-border); border-radius: 10px;
-  background: var(--color-surface-2);
-}
-.batch-title { font-size: 0.85rem; font-weight: 700; color: var(--color-text); }
-.batch-desc { font-size: 0.72rem; line-height: 1.5; color: var(--color-text-muted); }
-.batch-hint { font-size: 0.7rem; color: var(--color-text-muted); }
-.batch-hint code { font-family: ui-monospace, monospace; color: var(--color-accent); }
-
-.btn-stop {
-  width: 100%; padding: 11px 0; border: none; border-radius: 10px;
-  background: rgba(255, 107, 107, 0.16); color: #ff6b6b;
-  font-size: 0.9rem; font-weight: 700; cursor: pointer; transition: opacity 0.2s;
-}
-.btn-stop:hover { opacity: 0.85; }
-
-.batch-progress { display: flex; flex-direction: column; gap: 5px; }
-.batch-stat { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--color-text-muted); }
-.batch-stat .cur  { color: var(--color-primary); }
-.batch-stat .ok   { color: #2ecc71; margin-left: auto; }
-.batch-stat .fail { color: #ff6b6b; }
 
 /* ── 生成 + 查看历史 一行 ── */
 .action-row { display: flex; gap: 8px; align-items: stretch; margin-top: 4px; }
@@ -1562,7 +1234,7 @@ onUnmounted(() => {
 .hs-hint { font-size: 0.78rem; color: rgba(255, 255, 255, 0.45); margin: 0 0 10px; }
 .hs-view-box {
   margin-top: 8px;
-  aspect-ratio: 16 / 9;
+  min-height: 180px;                 /* 等帧时占位；来帧后跟随图片原始比例（头显单眼近方形）*/
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
@@ -1571,18 +1243,15 @@ onUnmounted(() => {
   justify-content: center;
   overflow: hidden;
 }
-.hs-view-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.hs-view-img { width: 100%; height: auto; display: block; }
 .hs-view-waiting { font-size: 0.82rem; color: rgba(255, 255, 255, 0.4); }
 
 /* ── 动态情绪闭环采集 ── */
 .scene-select { margin-bottom: 6px; }
-.loop-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 12px;
-  background: var(--color-surface-2);
-}
-.loop-actions { margin-top: 6px; gap: 8px; }
+.scene-dims { gap: 8px; margin-bottom: 8px; }
+.dim-field { display: flex; flex-direction: column; gap: 4px; }
+.dim-label { font-size: 0.75rem; color: var(--color-text-muted, rgba(255, 255, 255, 0.55)); }
+.btn-stop { background: #dc2626; }
 .loop-meta {
   display: flex; flex-wrap: wrap; gap: 12px;
   margin: 8px 0 4px; font-size: 0.82rem;

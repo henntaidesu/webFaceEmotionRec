@@ -71,6 +71,9 @@ class AffectImageModel(BaseModel):
             "scene":      {"type": "TEXT"},
             "reasoning":  {"type": "TEXT"},
             "image_url":  {"type": "TEXT"},
+            # 磁盘相对路径（相对仓库根，如 image/happy/20260723_181500.png）——
+            # image_url 只是它的 HTTP 映射，换端口/换机器后仍能凭 path 找回文件
+            "image_path": {"type": "TEXT"},
             "liked":      {"type": "BOOLEAN"},
             "reaction":   {"type": "JSONB"},
         }

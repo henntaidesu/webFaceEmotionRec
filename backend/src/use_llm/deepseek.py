@@ -88,7 +88,8 @@ def _chat(messages, temperature, max_tokens=None) -> dict:
     try:
         data = json.loads(raw)
         content = data["choices"][0]["message"]["content"]
-        return json.loads(content)  # response_format=json_object 保证 content 是 JSON 串
+        # strict=False：容忍模型在字符串值里放入的原始换行等控制字符（否则严格模式会解析失败）
+        return json.loads(content, strict=False)
     except (KeyError, IndexError, ValueError) as e:
         raise RuntimeError(f"DeepSeek 返回无法解析: {e}")
 
@@ -120,7 +121,10 @@ _SCENE_SYSTEM_PROMPT = (
     "Rewrite the base scene into a vivid prompt whose mood, palette, lighting and composition "
     "match BOTH the target emotion AND the requested intensity level: a stronger directive means "
     "a more extreme, saturated, unambiguous version of that emotion; a weaker/softening directive "
-    "means a milder, gentler version. Keep it a coherent 360 panorama (no people). "
+    "means a milder, gentler version. The scene elements may include a TIME, a PLACE, an ACTIVITY, "
+    "and an EVENT; treat the ACTIVITY as what the VIEWER themselves is doing in first person, so render "
+    "the scene from the viewer's immersive first-person point of view and do NOT depict any people or "
+    "human figures in the image. Keep it a coherent seamless 360 panorama. "
     "Reply with STRICT JSON only, keys: "
     '"positive" (detailed English image prompt, comma-separated tags/phrases, MUST start with '
     "\"equirectangular 360 panorama, \"), "
@@ -145,20 +149,27 @@ def generate_scene_prompt(emotion, scene, directive, locale="zh") -> dict:
         f"INTENSITY DIRECTIVE: {str(directive or 'render at a natural, moderate intensity').strip()}\n\n"
         "Return ONE 360 panorama prompt (as JSON) at the requested emotion and intensity."
     )
-    parsed = _chat(
-        [{"role": "system", "content": _SCENE_SYSTEM_PROMPT},
-         {"role": "user", "content": user_msg}],
-        temperature=_settings()["temperature"],
-    )
-    positive = str(parsed.get("positive") or "").strip()
-    if not positive:
-        raise RuntimeError("DeepSeek 返回缺少 positive 提示词")
-    return {
-        "positive": positive,
-        "negative": str(parsed.get("negative") or "").strip(),
-        "scene": str(parsed.get("scene") or "").strip(),
-        "reasoning": str(parsed.get("reasoning") or "").strip(),
-    }
+    messages = [
+        {"role": "system", "content": _SCENE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+    # JSON 模式偶尔返回空 positive 或解析抖动（temperature 偏高时）；重试一次，避免闭环因单次抖动中断。
+    last_err = "DeepSeek 返回缺少 positive 提示词"
+    for _attempt in range(2):
+        try:
+            parsed = _chat(messages, temperature=_settings()["temperature"])
+        except RuntimeError as e:
+            last_err = str(e)
+            continue
+        positive = str(parsed.get("positive") or "").strip()
+        if positive:
+            return {
+                "positive": positive,
+                "negative": str(parsed.get("negative") or "").strip(),
+                "scene": str(parsed.get("scene") or "").strip(),
+                "reasoning": str(parsed.get("reasoning") or "").strip(),
+            }
+    raise RuntimeError(last_err)
 
 
 def generate_image_prompt(trajectory, current, locale="zh") -> dict:

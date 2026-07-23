@@ -10,7 +10,13 @@ Real-time facial emotion recognition web app. A Vue 3 SPA streams webcam frames 
 
 ## Commands
 
-The app expects a conda env named `webFaceEmotionRec` (not the venv shown in README).
+**All Python/backend commands MUST run in the conda env `webFaceEmotionRec`** (this holds torch+CUDA, psycopg, timm, etc. — not the venv shown in README). Activate it first, or prefix with `conda run`:
+
+```powershell
+conda activate webFaceEmotionRec        # then run python / pip / main.py
+# or, one-off without activating:
+conda run -n webFaceEmotionRec python backend/main.py
+```
 
 ```powershell
 # Full stack (both services), from repo root:

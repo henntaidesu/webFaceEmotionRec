@@ -321,11 +321,36 @@ def _set_current_stimulus(path, emotion: str) -> None:
     _current_stimulus["ts"] = int(time.time() * 1000)
 
 
+# 下一张图的生成进度：webside 闭环把 ComfyUI 的采样进度打到这里，
+# 头显随 /api/stimulus/current 一起取回，显示「下一张生成中 x%」。
+_stimulus_progress: dict = {"running": False, "current": 0, "max": 0, "step": 0, "note": "", "ts": 0}
+
+
 @app.get("/api/stimulus/current")
 async def stimulus_current():
-    """Unity 头显轮询：返回当前应显示的刺激图 {version,url,path,emotion,ts}。
+    """Unity 头显轮询：返回当前应显示的刺激图 {version,url,path,emotion,ts} + progress。
     version 从 0 开始，>0 表示有图；头显记录 version，变大时下载 url 贴天空盒。"""
-    return _current_stimulus
+    return {**_current_stimulus, "progress": _stimulus_progress}
+
+
+@app.post("/api/stimulus/progress")
+async def stimulus_progress_set(body: dict = Body(default=None)):
+    """webside 闭环上报下一张图的生成进度 {running,current,max,step,note}。"""
+    body = body or {}
+    _stimulus_progress.update({
+        "running": bool(body.get("running")),
+        "current": int(body.get("current") or 0),
+        "max": int(body.get("max") or 0),
+        "step": int(body.get("step") or 0),
+        "note": str(body.get("note") or "")[:120],
+        "ts": int(time.time() * 1000),
+    })
+    return {"ok": True}
+
+
+@app.get("/api/stimulus/progress")
+async def stimulus_progress_get():
+    return _stimulus_progress
 
 
 @app.post("/api/stimulus/show")

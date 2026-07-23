@@ -29,6 +29,17 @@ defineEmits(['close'])
 const mount = ref(null)
 const xrSupported = ref(false)
 
+// 等距全景贴到球内壁时，默认 mipmap 会在左右缠绕缝处选到最低分辨率 mip → 出现明显竖缝。
+// 水平 RepeatWrapping + 关 mipmap(LinearFilter) 消除接缝。
+function setupPanoTexture(tex) {
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.wrapS = THREE.RepeatWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.minFilter = THREE.LinearFilter
+  tex.generateMipmaps = false
+  return tex
+}
+
 let renderer, scene, camera, sphere, texture, raf
 let lon = 0, lat = 0, isDown = false, downX = 0, downY = 0, downLon = 0, downLat = 0
 let fov = 75
@@ -99,8 +110,7 @@ onMounted(async () => {
   // 内翻的球体：把等距全景贴到球内壁
   const geo = new THREE.SphereGeometry(500, 60, 40)
   geo.scale(-1, 1, 1)
-  texture = new THREE.TextureLoader().load(props.src)
-  texture.colorSpace = THREE.SRGBColorSpace
+  texture = setupPanoTexture(new THREE.TextureLoader().load(props.src))
   sphere = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: texture }))
   scene.add(sphere)
 
@@ -131,8 +141,7 @@ onMounted(async () => {
 // 序列呈现时父组件会切换 src → 重新加载球体贴图
 watch(() => props.src, (url) => {
   if (!sphere || !url) return
-  const next = new THREE.TextureLoader().load(url)
-  next.colorSpace = THREE.SRGBColorSpace
+  const next = setupPanoTexture(new THREE.TextureLoader().load(url))
   const old = sphere.material.map
   sphere.material.map = next
   sphere.material.needsUpdate = true
