@@ -5,6 +5,7 @@ import TrainingPanel from './components/TrainingPanel.vue'
 import EvaluationPanel from './components/EvaluationPanel.vue'
 import VRStimulusPanel from './components/VRStimulusPanel.vue'
 import AffectPreferencePanel from './components/AffectPreferencePanel.vue'
+import ResearchLogPanel from './components/ResearchLogPanel.vue'
 import SystemSettingsPanel from './components/SystemSettingsPanel.vue'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
@@ -23,6 +24,8 @@ const routes = [
   { path: '/jp/comfyui/stimulus', component: VRStimulusPanel, props: { locale: ja } },
   { path: '/cn/comfyui/affect', component: AffectPreferencePanel, props: { locale: zh } },
   { path: '/jp/comfyui/affect', component: AffectPreferencePanel, props: { locale: ja } },
+  { path: '/cn/log',      component: ResearchLogPanel, props: { locale: zh } },
+  { path: '/jp/log',      component: ResearchLogPanel, props: { locale: ja } },
   { path: '/cn/settings',  component: SystemSettingsPanel, props: { locale: zh } },
   { path: '/jp/settings',  component: SystemSettingsPanel, props: { locale: ja } },
 ]

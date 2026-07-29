@@ -36,6 +36,10 @@
           </div>
         </div>
 
+        <RouterLink :to="`${prefix}/log`" class="nav-link">
+          {{ currentLocale.nav.log }}
+        </RouterLink>
+
         <RouterLink :to="`${prefix}/settings`" class="nav-link">
           {{ currentLocale.nav.settings }}
         </RouterLink>

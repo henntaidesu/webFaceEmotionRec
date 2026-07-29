@@ -21,7 +21,7 @@ docs
 # Coverage directory used by tools like istanbul
 coverage
 *.lcov
-
+cache/
 # nyc test coverage
 .nyc_output
 

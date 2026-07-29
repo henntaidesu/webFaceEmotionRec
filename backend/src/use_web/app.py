@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import config
+from .. import research_log
 from .. import settings_store
 from ..use_capture import session_store
 from ..use_model import labels, model_registry
@@ -542,6 +543,36 @@ async def predict_endpoint(body: dict = Body(default=None)):
     return await loop.run_in_executor(
         executor, lambda: predictor.predict(body or {}, models.device)
     )
+
+
+# ── 研究记录日志（单 JSON 文件，供「研究日志」页读写）────────────────────
+# 该文件也会被直接用编辑器改，故每次请求都重读磁盘，不做内存缓存。
+@app.get("/api/log/entries")
+async def log_entries():
+    """全部日志条目（日期倒序）+ 标签集合。"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, research_log.list_entries)
+
+
+@app.post("/api/log/entries")
+async def log_upsert(body: dict = Body(default=None)):
+    """新增/覆盖一天的记录：{"date":"YYYY-MM-DD", "progress", "issues", "plan", "tags"}。"""
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(executor, research_log.upsert_entry, body or {})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"写入失败：{e}"})
+
+
+@app.delete("/api/log/entries/{date}")
+async def log_delete(date: str):
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(executor, research_log.delete_entry, date)
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"写入失败：{e}"})
 
 
 # ── 系统设置（根目录 conf.ini 持久化，供「系统设置」页读写）─────────────

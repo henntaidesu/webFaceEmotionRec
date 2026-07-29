@@ -73,6 +73,9 @@ EVAL_DIR.mkdir(parents=True, exist_ok=True)
 # 网页生成的刺激图按情感分目录存放于此（image/<emotion>/<时间戳>.png）
 IMAGE_DIR = Path(os.getenv("IMAGE_DIR", str(ROOT / "image")))
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+# 研究记录日志：全部条目存于单个 JSON 文件（每日一条，分区模板）
+RESEARCH_LOG_FILE = Path(os.getenv("RESEARCH_LOG_FILE", str(ROOT / "Log" / "research_log.json")))
 # 每个训练运行保留的最近权重文件数
 KEEP_CHECKPOINTS = int(os.getenv("KEEP_CHECKPOINTS", "10"))
 
