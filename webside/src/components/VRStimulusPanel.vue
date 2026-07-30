@@ -41,11 +41,6 @@
             {{ locale.stimulus.hsRefresh }}
           </button>
         </div>
-        <p class="hs-hint no-mb">
-          {{ locale.stimulus.hsHint }}
-          <span v-if="headset.baseUrl" class="hs-addr">{{ headset.baseUrl }}</span>
-        </p>
-        <p v-if="!headset.online" class="hs-hint hs-warn no-mb">{{ locale.stimulus.hsOfflineHint }}</p>
       </section>
 
       <!-- ② 刺激种子：目标情绪 + 场景四要素（组合喂 DeepSeek 动态生成提示词）-->
@@ -171,6 +166,12 @@
           :title="online ? '' : locale.stimulus.offlineHint"
           @click="toggleLoop"
         >{{ loopRunning ? '■ 停止生成' : '▶ 开始生成图片' }}</button>
+        <button
+          class="btn-random"
+          :disabled="loopRunning || !online"
+          :title="online ? '随机情绪 + 随机场景四要素，然后开始生成' : locale.stimulus.offlineHint"
+          @click="randomGenerate"
+        >🎲 随机生成图片</button>
         <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
       </div>
 
@@ -182,7 +183,11 @@
           <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
           <span>已生成：{{ loopStep }} 张</span>
           <span>同步：{{ syncText }}</span>
+          <span :class="{ 'meta-bad': loopRunning && capture.rows === 0 }">采集：{{ capture.rows }} 帧</span>
         </div>
+        <p v-if="loopRunning && capture.rows === 0" class="status-msg msg-error">
+          正在生成，但**一帧 FEA 都没入库** —— 头显没在推数据。检查：头显里应用是否打开、Quest Pro 面部追踪权限是否开启。这样采下去只会得到空会话。
+        </p>
         <svg class="intensity-curve" viewBox="0 0 280 60" preserveAspectRatio="none">
           <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
           <polyline v-if="curvePath" :points="curvePath" class="curve-line" />
@@ -428,6 +433,13 @@ function randomScene() {
     if (d && d.items.length) sel[k] = Math.floor(Math.random() * d.items.length)
   }
 }
+// 整套刺激种子随机：目标情绪 + 场景四要素。
+// 情绪从 emotions（后端选项表）里抽，不写死列表，加类别时不用改这里。
+function randomizeSeed() {
+  const list = emotions.value
+  if (list.length) selectedEmotion.value = list[Math.floor(Math.random() * list.length)].key
+  randomScene()
+}
 
 // ── 动态情绪闭环采集（DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈）──
 const LOOP_MODES = [
@@ -450,6 +462,9 @@ const dbWarn = ref('')                 // 入库失败提示（闭环照跑，�
 const pushWarn = ref('')
 const loopSessionId = ref('')
 const latestIntensity = ref(0)
+// 本次采集真正入库的 FEA 帧数（后端随 /api/fea/latest 一起返回）。
+// 之前 37 个会话一帧没采到却毫无提示，一周后查库才发现——这个计数就是防这个的。
+const capture = reactive({ rows: 0, lastMs: null })
 const intensitySeries = reactive([])   // 目标情绪强度随时间的曲线点 [{ v }]
 let latestFeaData = null
 let feaTimer = null
@@ -637,6 +652,10 @@ async function pollFeaOnce() {
   try {
     const data = await fetchFeaLatest()
     latestFeaData = data
+    if (data?.capture) {
+      capture.rows = data.capture.rows || 0
+      capture.lastMs = data.capture.last_ms || null
+    }
     const v = targetScore(data)
     if (v != null) {
       latestIntensity.value = v
@@ -753,6 +772,16 @@ function toggleLoop() {
   else startLoop()
 }
 
+// 随机生成：整套种子换掉再走正常生成流程。
+// 先 await nextTick，让 selectedEmotion / sel 的 watch 把新种子推给后端（头显跟着变），
+// 再开始生成——否则头显那边可能还停在上一组参数上。
+async function randomGenerate() {
+  if (loopRunning.value) return
+  randomizeSeed()
+  await nextTick()
+  startLoop()
+}
+
 function stopLoop({ fromRemote = false } = {}) {
   loopAbort = true
   loopRunning.value = false
@@ -792,7 +821,7 @@ const panoSrc    = ref(null)
 // 外网下头显连的是笔记本的 WiFi，和笔记本一起在别人家的 NAT 后面，服务器主动连不进来，
 // 所以没有「连接头显」这个动作可做——只能等头显应用自己来报到。它每秒 GET 一次
 // /api/stimulus/control?client=vr，后端记时间戳，这里轮询读回来。
-const headset = reactive({ busy: false, online: false, ageS: null, baseUrl: '', msg: '' })
+const headset = reactive({ busy: false, online: false, ageS: null, msg: '' })
 let headsetTimer = null
 
 const headsetText = computed(() => {
@@ -808,7 +837,6 @@ async function refreshHeadset() {
     const p = await getHeadsetPresence()
     headset.online = !!p.online
     headset.ageS = p.age_s
-    headset.baseUrl = p.base_url || ''
     headset.msg = ''
   } catch (e) {
     headset.msg = e.message
@@ -980,14 +1008,17 @@ async function loadStimulusOptions() {
   try {
     const res = await fetch('/api/stimulus/options')
     const data = await res.json()
-    if (Array.isArray(data?.scene_dims)) sceneDims.value = data.scene_dims
-  } catch {
-    sceneDims.value = []   // 拉不到就空着；本页出图本来也依赖后端
-  }
+    if (Array.isArray(data?.scene_dims) && data.scene_dims.length) {
+      sceneDims.value = data.scene_dims
+      return true
+    }
+  } catch { /* 后端还没起来 */ }
+  return false
 }
 
 // ── 生命周期 ──
 let connTimer = null
+let optionsTimer = null
 onMounted(async () => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
@@ -995,7 +1026,13 @@ onMounted(async () => {
   // 心跳超时 5s，3s 一轮足够及时反映头显掉线
   headsetTimer = setInterval(refreshHeadset, 3000)
   headsetLink.start()
-  await loadStimulusOptions()
+  // 后端还没起来时选项拉不到。以前拉不到就空着且永不重试，「场景四要素」会一直缺
+  // 到手动刷新页面——后端重启是常事，这里必须自愈（头显那侧早就是重试的）。
+  if (!await loadStimulusOptions()) {
+    optionsTimer = setInterval(async () => {
+      if (await loadStimulusOptions()) { clearInterval(optionsTimer); optionsTimer = null }
+    }, 3000)
+  }
   await pollControl()                          // 先对齐一次，再开始定期同步
   ctlTimer = setInterval(pollControl, 1500)
 })
@@ -1004,6 +1041,7 @@ onUnmounted(() => {
   clearTimeout(sessionTimer)
   if (ctlTimer) { clearInterval(ctlTimer); ctlTimer = null }
   if (headsetTimer) { clearInterval(headsetTimer); headsetTimer = null }
+  if (optionsTimer) { clearInterval(optionsTimer); optionsTimer = null }
 })
 </script>
 
@@ -1097,7 +1135,6 @@ onUnmounted(() => {
 .sec-fold > summary::before { content: '▸ '; color: var(--color-text-muted); }
 .sec-fold[open] > summary::before { content: '▾ '; }
 .sec-fold-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.no-mb { margin-bottom: 0; }
 
 .offline-bar {
   flex: none; display: flex; align-items: center; gap: 12px;
@@ -1254,6 +1291,15 @@ onUnmounted(() => {
   cursor: pointer; transition: all 0.2s;
 }
 .btn-history:hover { border-color: #2563eb; color: #2563eb; }
+.btn-random {
+  flex: 1 1 0; white-space: nowrap;
+  padding: 0 16px; border-radius: 10px;
+  border: 1px solid rgba(37, 99, 235, 0.5); background: rgba(37, 99, 235, 0.12);
+  color: #93b4fd; font-size: 0.82rem; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.btn-random:hover:not(:disabled) { border-color: #2563eb; color: #fff; background: rgba(37, 99, 235, 0.28); }
+.btn-random:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── 历史图片弹窗 ── */
 .history-overlay {
@@ -1318,8 +1364,6 @@ onUnmounted(() => {
 }
 .hs-status.hs-ok { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.1); }
 .hs-status.hs-bad { color: #f0a0a0; border-color: rgba(240, 160, 160, 0.35); background: rgba(240, 160, 160, 0.08); }
-.hs-warn { color: #f0a0a0; margin-top: 4px; }
-.hs-addr { font-family: ui-monospace, monospace; opacity: 0.85; }
 .hs-btn {
   margin-left: auto; padding: 6px 16px; border-radius: 8px; border: none;
   background: #3b82f6; color: #fff; font-size: 0.85rem; cursor: pointer;
@@ -1347,6 +1391,7 @@ onUnmounted(() => {
 .dim-field { display: flex; flex-direction: column; gap: 4px; }
 .dim-label { font-size: 0.75rem; color: var(--color-text-muted, rgba(255, 255, 255, 0.55)); }
 .btn-stop { background: #dc2626; }
+.meta-bad { color: #f0a0a0; font-weight: 600; }
 .loop-meta {
   display: flex; flex-wrap: wrap; gap: 12px;
   margin: 8px 0 4px; font-size: 0.82rem;

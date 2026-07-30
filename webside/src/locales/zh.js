@@ -502,8 +502,6 @@ export default {
     hsRefresh: '刷新',
     hsOnline: '● 在线',
     hsOffline: '○ 离线',
-    hsOfflineHint: '头显里还没打开应用（或它连不上服务器）。外网下无法远程启动，需要有人在头显里点开应用；确认头显已连上笔记本的 WiFi 且能上网。',
-    hsHint: '在头显里打开应用即自动连上。头显应连的服务器地址：',
     hsViewShow: '👁 查看头显视角',
     hsViewHide: '收起头显视角',
     hsViewTitle: '👁 头显视角',

@@ -44,15 +44,30 @@ def _group_score(bs, names):
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def normalize_blendshapes(blendshapes) -> list[float]:
+    """校验并裁到 FEA_DIM 维。
+
+    **为什么允许多于 63 维**：Meta XR SDK 从 `FaceExpression` 换到 `FaceExpression2` 后，
+    `OVRFaceExpressions.FaceExpression.Max` 由 63 变成 **70**——末尾追加了 7 个舌头
+    blendshape（Tongue_Tip_Interdental=63 … Tongue_Retreat=69）。头显因此发 70 维，
+    而这里原先严格要求 63，导致 `POST /api/fea` 全部 400、一帧都存不下来。
+    前 63 维的顺序和含义没变，取前 63 维即可，与既有 63 维训练管线保持一致。
+    （代价：舌头那 7 维被丢弃。本课题是面部情绪，暂不需要；要用得同步改
+    OVR_FACE_EXPRESSIONS、config.FEA_DIM 与切窗脚本。）
+    """
+    if not isinstance(blendshapes, (list, tuple)) or len(blendshapes) < FEA_DIM:
+        n = len(blendshapes) if hasattr(blendshapes, "__len__") else "?"
+        raise ValueError(f"blendshapes 维度应 ≥ {FEA_DIM}，实际 {n}")
+    return [float(x) for x in blendshapes[:FEA_DIM]]
+
+
 def classify_fea(blendshapes) -> dict:
-    """blendshapes: 长度 63 的 0~1 浮点列表（OVRFaceExpressions 顺序）。
+    """blendshapes: 至少 63 维的 0~1 浮点列表（OVRFaceExpressions 顺序，多余维度忽略）。
 
     返回与图像识别路径同构的 face 结构：
         {"dominant_en", "dominant"(中文), "emotions": {中文标签: 百分比}}
     """
-    if not isinstance(blendshapes, (list, tuple)) or len(blendshapes) != FEA_DIM:
-        raise ValueError(f"blendshapes 维度应为 {FEA_DIM}，实际 {len(blendshapes) if hasattr(blendshapes, '__len__') else '?'}")
-    bs = [float(x) for x in blendshapes]
+    bs = normalize_blendshapes(blendshapes)
 
     scores = {emo: _group_score(bs, names) for emo, names in _AU_GROUPS.items()}
     # 中性：整体表情越弱越中性

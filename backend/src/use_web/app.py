@@ -21,7 +21,7 @@ from .. import settings_store
 from ..use_capture import session_store
 from ..use_model import labels, model_registry
 from ..use_model.emotion import analyze_frame
-from ..use_model.fea_emotion import classify_fea
+from ..use_model.fea_emotion import classify_fea, normalize_blendshapes
 from ..use_model.models import get_models
 from ..use_predict import predictor
 from ..use_eval import eval_store, evaluation
@@ -559,7 +559,11 @@ async def rtc_bye():
 # 推到这里；后端分类后，前端「微情感生成」页轮询 /api/fea/latest 取用。
 _latest_fea: dict = {"data": None}
 # 「情感偏好生成」页正在采集的活动会话；非空时每帧 FEA 同时写入 PG 时间轴。
-_affect_active: dict = {"session_id": None, "subject_id": None}
+_affect_active: dict = {
+    "session_id": None, "subject_id": None,
+    # 本次会话真正落库的 FEA 帧数与最后一帧时间，供网页实时显示采集是否在动
+    "fea_rows": 0, "last_fea_ms": None,
+}
 
 
 def _emotions_en(result: dict) -> dict:
@@ -589,8 +593,10 @@ async def fea_ingest(body: dict = Body(default=None)):
     sid = _affect_active["session_id"]
     if sid:
         row = {
+            # 存归一化后的 63 维：头显（Meta SDK FaceExpression2）实际发 70 维，
+            # 多出的 7 个是舌头通道。库里必须只有一种维度，否则切窗训练时长度不齐。
             "ts_ms": ts,
-            "blendshapes": bs,
+            "blendshapes": normalize_blendshapes(bs),
             "emotions": _emotions_en(result),
             "dominant": result.get("dominant_en"),
             "source": "quest_fea",
@@ -598,21 +604,34 @@ async def fea_ingest(body: dict = Body(default=None)):
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(executor, lambda: pg_store.insert_fea(sid, [row]))
+            # 落库计数：网页据此显示「本次采集已入库 N 帧」。没有它就会重演
+            # 「37 个会话、0 帧 FEA，一周后查库才发现」——采集期间必须当场看得见。
+            _affect_active["fea_rows"] += 1
+            _affect_active["last_fea_ms"] = ts
         except RuntimeError as e:
             logger.warning("FEA 写入 PG 失败: %s", e)
     return result
 
 
+def _capture_state() -> dict:
+    """当前采集会话的落库情况。挂在每秒都被轮询的 /api/fea/latest 上，不额外加请求。"""
+    return {
+        "session_id": _affect_active["session_id"],
+        "rows": _affect_active["fea_rows"],
+        "last_ms": _affect_active["last_fea_ms"],
+    }
+
+
 @app.get("/api/fea/latest")
 async def fea_latest():
-    """前端取最近一帧 FEA 情绪；无数据时 success=False。"""
+    """前端取最近一帧 FEA 情绪；无数据时 success=False。附带本次采集的入库进度。"""
     data = _latest_fea["data"]
     if not data:
-        return {"success": False, "faces": []}
+        return {"success": False, "faces": [], "capture": _capture_state()}
     # 结构对齐图像识别路径：faces:[{dominant_en,dominant,emotions}]
     return {"success": True, "timestamp_ms": data["timestamp_ms"], "faces": [
         {"dominant_en": data["dominant_en"], "dominant": data["dominant"], "emotions": data["emotions"]}
-    ]}
+    ], "capture": _capture_state()}
 
 
 # ── FEA 时序闭环采集：会话记录（头显 Unity 经 LAN 推四路时序）─────────
@@ -854,6 +873,8 @@ async def affect_session_start(body: dict = Body(default=None)):
         return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
     _affect_active["session_id"] = r["session_id"]
     _affect_active["subject_id"] = str(body.get("subject_id") or "anon")
+    _affect_active["fea_rows"] = 0          # 新会话重新计数
+    _affect_active["last_fea_ms"] = None
     return r
 
 
