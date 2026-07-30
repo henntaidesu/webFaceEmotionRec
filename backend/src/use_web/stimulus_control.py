@@ -95,9 +95,14 @@ _EMOTION_KEYS = {e["key"] for e in EMOTIONS}
 _MODE_KEYS = {m["key"] for m in MODES}
 _DIM_LEN = {d["key"]: len(d["items"]) for d in SCENE_DIMS}
 
+LANGS = ("zh", "ja", "en")
+
 _LOCK = threading.Lock()
 _state = {
     "running": False,          # 是否要跑生成闭环（网页据此启停）
+    # 界面语言：由网页当前所在的 /cn 或 /jp 决定，头显跟随它。
+    # 受试者面对的是同一套实验，两端语言不一致会造成指导语与选项对不上。
+    "lang": "zh",
     "emotion": "happy",
     "mode": "amplify",
     "target_intensity": 0.6,
@@ -144,6 +149,12 @@ def update_control(patch: dict) -> dict:
             val = bool(patch["running"])
             if val != _state["running"]:
                 _state["running"] = val
+                changed = True
+
+        if "lang" in patch:
+            val = str(patch["lang"] or "").strip().lower()
+            if val in LANGS and val != _state["lang"]:
+                _state["lang"] = val
                 changed = True
 
         if "emotion" in patch:

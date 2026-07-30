@@ -502,6 +502,8 @@ export default {
     hsViewHide: '收起头显视角',
     hsViewTitle: '👁 头显视角',
     hsViewWaiting: '等待头显画面…（需头显里应用正在运行）',
+    hsViewConnecting: '正在与头显建立点对点连接…',
+    hsViewFailed: '点对点连接失败（两端都在 NAT 后时需配置 TURN，见系统设置）',
     emotion: '目标情绪',
     scene: '场景提示词',
     pick: '🎲 随机组合',

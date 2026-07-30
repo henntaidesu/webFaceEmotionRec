@@ -20,6 +20,16 @@ PORT = int(os.getenv("BACKEND_PORT", "9501"))
 ADB_PATH = os.getenv("ADB_PATH", "")
 HEADSET_PACKAGE = os.getenv("HEADSET_PACKAGE", "com.DefaultCompany.webFaceEmotionRec2")
 
+# ── 头显视角 WebRTC 点对点回传 ────────────────────────────────────
+# 画面走头显↔浏览器直连，后端只转交 SDP（几 KB），不经手任何像素。
+# 外网场景两端多半各在 NAT 后：STUN 只能打通「非对称 NAT」，两边都是对称 NAT 时
+# 必须有 TURN 中继，否则连不上。TURN_URL 留空＝只用 STUN。
+# 这些值是 conf.ini [webrtc] 的初值，实际以 conf.ini 为准（设置页可改）。
+STUN_URLS = os.getenv("STUN_URLS", "stun:stun.l.google.com:19302")
+TURN_URL = os.getenv("TURN_URL", "")
+TURN_USERNAME = os.getenv("TURN_USERNAME", "")
+TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "")
+
 # ── CUDA 设备 ─────────────────────────────────────────────────────
 # 默认强制使用 CUDA：无可用 GPU 时直接报错退出。
 # 设置环境变量 REQUIRE_CUDA=0 可关闭，改为在无 GPU 时回退到 CPU。

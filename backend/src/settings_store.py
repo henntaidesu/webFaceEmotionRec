@@ -29,6 +29,14 @@ _SCHEMA = {
         "password": (config.POSTGRES_PASSWORD, str),
         "database": (config.POSTGRES_DATABASE, str),
     },
+    "webrtc": {
+        # 头显视角点对点回传的 ICE 服务器。stun_urls 可用逗号分隔多个。
+        # turn_url 留空＝只用 STUN（两端都在对称 NAT 后时会连不上）。
+        "stun_urls": (config.STUN_URLS, str),
+        "turn_url": (config.TURN_URL, str),
+        "turn_username": (config.TURN_USERNAME, str),
+        "turn_credential": (config.TURN_CREDENTIAL, str),
+    },
 }
 
 _lock = threading.Lock()

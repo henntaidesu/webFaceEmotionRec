@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import torch
-from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ from ..use_llm import deepseek
 from ..use_store import pg_store
 from ..use_train import train_store, training
 from . import headset
+from . import rtc_signal
 from . import stimulus_control
 from .image_utils import decode_base64_image
 
@@ -350,9 +351,12 @@ async def stimulus_control_post(body: dict = Body(default=None)):
 
 @app.get("/api/stimulus/current")
 async def stimulus_current():
-    """Unity 头显轮询：返回当前应显示的刺激图 {version,url,path,emotion,ts} + progress。
-    version 从 0 开始，>0 表示有图；头显记录 version，变大时下载 url 贴天空盒。"""
-    return {**_current_stimulus, "progress": _stimulus_progress}
+    """Unity 头显轮询：返回当前应显示的刺激图 {version,url,path,emotion,ts} + progress + lang。
+    version 从 0 开始，>0 表示有图；头显记录 version，变大时下载 url 贴天空盒。
+
+    lang 顺带带上：自评面板每 0.5s 就在轮询这个接口，跟着它切语言不必再多发一次请求。"""
+    return {**_current_stimulus, "progress": _stimulus_progress,
+            "lang": stimulus_control.get_control()["lang"]}
 
 
 @app.post("/api/stimulus/progress")
@@ -414,30 +418,65 @@ async def headset_connect(body: dict = Body(default=None)):
     )
 
 
-# ── 头显用户视角回传（头显渲染当前视角 → 后端中转 → 网页预览）────────
-# 头显侧 HeadsetViewStreamer.cs 把中央眼相机渲成 JPEG，按帧率 POST 原始字节到
-# /api/headset/view；后端只保留最新一帧，网页 <img> 轮询 GET 取回显示。
-_headset_view: dict = {"jpeg": None, "ts": 0}
+# ── 头显用户视角回传（WebRTC 点对点：头显 → 浏览器，画面不过后端）──────
+# 后端在这里只转交 SDP，像素一个字节都不经手。握手流程见 rtc_signal 模块。
+@app.get("/api/headset/rtc/config")
+async def rtc_config():
+    """两端共用的 ICE 服务器表（conf.ini [webrtc] 实时读）。"""
+    return {"iceServers": rtc_signal.ice_servers()}
 
 
-@app.post("/api/headset/view")
-async def headset_view_upload(request: Request):
-    """接收头显当前视角的一帧 JPEG（Content-Type: image/jpeg 原始字节），只存最新一帧。"""
-    data = await request.body()
-    if data:
-        _headset_view["jpeg"] = data
-        _headset_view["ts"] = int(time.time() * 1000)
-    return {"ok": True, "bytes": len(data), "ts": _headset_view["ts"]}
+@app.get("/api/headset/rtc/watch")
+async def rtc_watch():
+    """头显轮询：网页那边有人在看吗？没人看就不建连接、不开编码。"""
+    return rtc_signal.watching()
 
 
-@app.get("/api/headset/view")
-async def headset_view_get():
-    """网页拉取头显最新视角帧；无帧时返回 204。"""
-    jpg = _headset_view["jpeg"]
-    if not jpg:
+@app.post("/api/headset/rtc/offer")
+async def rtc_offer_put(body: dict = Body(default=None)):
+    """头显发布 SDP offer，开启新会话。"""
+    sdp = str((body or {}).get("sdp") or "")
+    if not sdp:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 sdp"})
+    return rtc_signal.put_offer(sdp)
+
+
+@app.get("/api/headset/rtc/offer")
+async def rtc_offer_get():
+    """网页取 offer（并登记「有人在看」）；暂无 offer 时返回 204。"""
+    offer = rtc_signal.take_offer()
+    if not offer:
         return Response(status_code=204)
-    return Response(content=jpg, media_type="image/jpeg",
-                    headers={"Cache-Control": "no-store"})
+    return offer
+
+
+@app.post("/api/headset/rtc/answer")
+async def rtc_answer_put(body: dict = Body(default=None)):
+    """网页回 SDP answer。"""
+    body = body or {}
+    sdp = str(body.get("sdp") or "")
+    if not sdp:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 sdp"})
+    try:
+        session = int(body.get("session"))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 session"})
+    return rtc_signal.put_answer(session, sdp)
+
+
+@app.get("/api/headset/rtc/answer")
+async def rtc_answer_get(session: int):
+    """头显取 answer；网页还没回时返回 204。"""
+    sdp = rtc_signal.take_answer(session)
+    if not sdp:
+        return Response(status_code=204)
+    return {"session": session, "sdp": sdp}
+
+
+@app.post("/api/headset/rtc/bye")
+async def rtc_bye():
+    """网页离开页面：立刻作废会话，头显下次轮询即停止编码。"""
+    return rtc_signal.bye()
 
 
 # ── Quest Pro 头显 FEA（63 维混合形状）→ 情绪 ─────────────────────

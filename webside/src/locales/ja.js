@@ -502,6 +502,8 @@ export default {
     hsViewHide: 'ヘッドセット視点を隠す',
     hsViewTitle: '👁 ヘッドセット視点',
     hsViewWaiting: 'ヘッドセット映像を待機中…（アプリ起動が必要）',
+    hsViewConnecting: 'ヘッドセットとP2P接続中…',
+    hsViewFailed: 'P2P接続に失敗（両端がNAT内の場合はTURN設定が必要・システム設定を参照）',
     emotion: 'ターゲット感情',
     scene: 'シーンプロンプト',
     pick: '🎲 ランダム組合せ',

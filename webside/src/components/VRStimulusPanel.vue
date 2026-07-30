@@ -221,8 +221,16 @@
       <div class="view-col">
         <div class="view-col-title">{{ locale.stimulus.hsViewTitle }}</div>
         <div class="hs-view-box">
-          <img v-if="headsetViewSrc" :src="headsetViewSrc" class="hs-view-img" alt="headset view" />
-          <span v-else class="hs-view-waiting">{{ locale.stimulus.hsViewWaiting }}</span>
+          <!-- 画面由头显 WebRTC 直推到本浏览器，不经过后端 -->
+          <video
+            v-show="headsetViewLive"
+            ref="headsetVideo"
+            class="hs-view-img"
+            autoplay
+            muted
+            playsinline
+          ></video>
+          <span v-if="!headsetViewLive" class="hs-view-waiting">{{ headsetViewHint }}</span>
         </div>
       </div>
     </div>
@@ -312,7 +320,8 @@ import {
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
 import { saveStimulusImage, reportStimulusProgress } from '../api/vrStimulus.js'
-import { getHeadsetStatus, connectHeadset, fetchHeadsetView } from '../api/headset.js'
+import { getHeadsetStatus, connectHeadset } from '../api/headset.js'
+import { createHeadsetViewLink } from '../api/headsetRtc.js'
 import { fetchFeaLatest, startSession as startAffectSession, stopSession as stopAffectSession, recordImage, generateScenePrompt } from '../api/affect.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
 const PanoramaViewer = defineAsyncComponent(() => import('./PanoramaViewer.vue'))
@@ -464,6 +473,9 @@ async function pushControl(patch) {
 function watchAndPush(getter, key) {
   watch(getter, (v) => { if (!applyingRemote) pushControl({ [key]: v }) })
 }
+// 头显跟随网页的语言：/cn 页面 → 头显中文，/jp 页面 → 头显日语。
+// 受试者面对的是同一套实验，两端语言不一致会让指导语和选项对不上。
+watch(lang, (v) => pushControl({ lang: v }), { immediate: true })
 watchAndPush(() => selectedEmotion.value, 'emotion')
 watchAndPush(() => loopMode.value, 'mode')
 watchAndPush(() => Number(targetIntensity.value), 'target_intensity')
@@ -796,30 +808,26 @@ async function doConnectHeadset() {
   }
 }
 
-// ── 头显用户视角预览（常驻右栏，持续轮询 /api/headset/view 拉最新一帧）──
-const headsetViewSrc = ref('')
-let headsetViewTimer = null
-let headsetViewAlive = false
+// ── 头显用户视角预览（WebRTC 点对点，画面不经后端）─────────────────
+// 不依赖 headset.ok：那是 USB/adb 的状态，而外网场景下头显本来就不走数据线。
+const headsetVideo = ref(null)
+const headsetViewState = ref('idle')      // idle|waiting|connecting|live|failed
+const headsetViewLive = computed(() => headsetViewState.value === 'live')
+const headsetViewHint = computed(() =>
+  headsetViewState.value === 'connecting' ? props.locale.stimulus.hsViewConnecting
+    : headsetViewState.value === 'failed' ? props.locale.stimulus.hsViewFailed
+      : props.locale.stimulus.hsViewWaiting,
+)
 
-// 自调度循环：等上一次请求 settle 再发下一次，避免 adb screencap 慢时请求堆叠淤塞隧道；
-// 未连接头显时跳过实际抓帧。
-async function pollHeadsetViewLoop() {
-  if (!headsetViewAlive) return
-  if (headset.ok) {
-    const blob = await fetchHeadsetView().catch(() => null)
-    if (blob) {
-      const prev = headsetViewSrc.value
-      headsetViewSrc.value = URL.createObjectURL(blob)
-      if (prev) URL.revokeObjectURL(prev)     // 顺序循环无重叠，撤销上一张安全
-    }
-  }
-  if (headsetViewAlive) headsetViewTimer = setTimeout(pollHeadsetViewLoop, 100)
-}
+const headsetLink = createHeadsetViewLink({
+  onStream(stream) {
+    if (headsetVideo.value) headsetVideo.value.srcObject = stream
+  },
+  onState(s) { headsetViewState.value = s },
+})
 
 onUnmounted(() => {
-  headsetViewAlive = false
-  if (headsetViewTimer) clearTimeout(headsetViewTimer)
-  if (headsetViewSrc.value) URL.revokeObjectURL(headsetViewSrc.value)
+  headsetLink.stop()
 })
 
 const progressPct = computed(() =>
@@ -974,8 +982,7 @@ onMounted(async () => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
   refreshHeadset()
-  headsetViewAlive = true
-  pollHeadsetViewLoop()
+  headsetLink.start()
   await loadStimulusOptions()
   await pollControl()                          // 先对齐一次，再开始定期同步
   ctlTimer = setInterval(pollControl, 1500)
