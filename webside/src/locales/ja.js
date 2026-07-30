@@ -15,6 +15,16 @@ export default {
     comfyAffect: '感情嗜好生成',
     log: '研究ログ',
     settings: 'システム設定',
+    logout: 'ログアウト',
+  },
+
+  login: {
+    desc: 'インターネットに公開しているため、まずログインしてください。',
+    username: 'ユーザー名',
+    password: 'パスワード',
+    submit: 'ログイン',
+    submitting: 'ログイン中…',
+    error: 'ユーザー名またはパスワードが違います',
   },
 
   log: {

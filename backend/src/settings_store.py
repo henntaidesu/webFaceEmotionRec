@@ -37,7 +37,16 @@ _SCHEMA = {
         "turn_username": (config.TURN_USERNAME, str),
         "turn_credential": (config.TURN_CREDENTIAL, str),
     },
+    "auth": {
+        # 网页登录口令。留空＝不启用登录。见 use_web/auth.py。
+        "username": (config.AUTH_USERNAME, str),
+        "password": (config.AUTH_PASSWORD, str),
+    },
 }
+
+# 私有分组：不经 /api/settings 读写。口令只在 conf.ini 里改——否则登录口令会
+# 随设置页的 GET 明文发回浏览器，等于白设。
+_PRIVATE_SECTIONS = {"auth"}
 
 _lock = threading.Lock()
 # interpolation=None：禁用 % 插值，否则含 % 的密码/API key 读取时抛 InterpolationSyntaxError
@@ -97,16 +106,17 @@ def get_section(section: str) -> dict:
 
 
 def all_settings() -> dict:
-    """返回全部设置：{section: {key: value}}。"""
-    return {section: get_section(section) for section in _SCHEMA}
+    """返回全部设置：{section: {key: value}}（不含 _PRIVATE_SECTIONS）。"""
+    return {section: get_section(section)
+            for section in _SCHEMA if section not in _PRIVATE_SECTIONS}
 
 
 def update_section(section: str, values: dict) -> dict:
     """写入某 section 的部分/全部键，落盘 conf.ini，返回更新后的实时值。
 
-    未知 section 抛 KeyError；值类型非法抛 ValueError（不落盘）。
+    未知或私有 section 抛 KeyError；值类型非法抛 ValueError（不落盘）。
     """
-    if section not in _SCHEMA:
+    if section not in _SCHEMA or section in _PRIVATE_SECTIONS:
         raise KeyError(section)
     _ensure_loaded()
     with _lock:

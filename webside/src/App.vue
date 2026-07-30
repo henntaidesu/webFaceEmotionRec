@@ -1,7 +1,7 @@
 <template>
   <div class="app-layout">
-    <!-- ── 左侧一级导航 ── -->
-    <aside class="sidebar">
+    <!-- ── 左侧一级导航（登录页不显示）── -->
+    <aside v-if="!isLogin" class="sidebar">
       <div class="brand">{{ currentLocale.pageTitle }}</div>
 
       <nav class="nav">
@@ -45,27 +45,35 @@
         </RouterLink>
       </nav>
 
-      <RouterLink :to="langSwitchPath" class="lang-switch">
-        {{ currentLocale.langSwitchLabel }}
-      </RouterLink>
+      <div class="sidebar-foot">
+        <RouterLink :to="langSwitchPath" class="lang-switch">
+          {{ currentLocale.langSwitchLabel }}
+        </RouterLink>
+        <button v-if="authRequired" class="lang-switch logout" @click="doLogout">
+          {{ currentLocale.nav.logout }}
+        </button>
+      </div>
     </aside>
 
     <!-- ── 主体内容 ── -->
-    <main class="content">
+    <main class="content" :class="{ bare: isLogin }">
       <RouterView />
     </main>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watchEffect } from 'vue'
-import { useRoute, RouterLink, RouterView } from 'vue-router'
+import { computed, onMounted, ref, watchEffect } from 'vue'
+import { useRoute, useRouter, RouterLink, RouterView } from 'vue-router'
 import zh from './locales/zh.js'
 import ja from './locales/ja.js'
+import { getAuthStatus, logout } from './api/auth.js'
 
 const route = useRoute()
+const router = useRouter()
 
 const isJp = computed(() => route.path.startsWith('/jp'))
+const isLogin = computed(() => route.path.endsWith('/login'))
 const prefix = computed(() => (isJp.value ? '/jp' : '/cn'))
 const currentLocale = computed(() => (isJp.value ? ja : zh))
 
@@ -90,6 +98,19 @@ const comfyGroup = computed(() => ({
 }))
 
 const comfyOpen = ref(true)
+
+// 后端没配口令时（本机调试）不显示「退出登录」
+const authRequired = ref(false)
+onMounted(async () => {
+  try {
+    authRequired.value = (await getAuthStatus()).required
+  } catch { /* 后端没起来：不显示 */ }
+})
+
+async function doLogout() {
+  await logout()
+  router.replace(`${prefix.value}/login`)
+}
 
 watchEffect(() => {
   document.title = currentLocale.value.pageTitle
@@ -190,9 +211,15 @@ watchEffect(() => {
   font-size: 0.85rem;
 }
 
-/* ── 语言切换（侧边栏底部） ── */
-.lang-switch {
+/* ── 语言切换 / 退出登录（侧边栏底部） ── */
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin-top: auto;
+}
+
+.lang-switch {
   padding: 10px 12px;
   border-radius: 6px;
   color: var(--color-text-muted);
@@ -206,6 +233,14 @@ watchEffect(() => {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.logout {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 /* ── 主体内容 ── */
 .content {
   flex: 1;
@@ -215,5 +250,10 @@ watchEffect(() => {
   height: 100vh;
   overflow-y: auto;
   padding: 24px;
+}
+
+/* 登录页自己居中排版，不要外层的内边距 */
+.content.bare {
+  padding: 0;
 }
 </style>

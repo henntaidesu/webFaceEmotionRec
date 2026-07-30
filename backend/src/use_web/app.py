@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import torch
-from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +28,7 @@ from ..use_eval import eval_store, evaluation
 from ..use_llm import deepseek
 from ..use_store import pg_store
 from ..use_train import train_store, training
+from . import auth
 from . import headset
 from . import rtc_signal
 from . import stimulus_control
@@ -46,10 +47,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── 登录闸门 ──────────────────────────────────────────────────────
+# 服务已在公网上，网页用的接口一律要求会话 Cookie；头显 Unity 用的接口不带
+# Cookie，按放行清单通过（清单与代价见 auth.py 顶部说明）。
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if auth.is_enabled() and not auth.is_public(request.method, request.url.path):
+        if not auth.check_token(request.cookies.get(auth.COOKIE_NAME)):
+            return JSONResponse(status_code=401, content={"ok": False, "error": "未登录"})
+    return await call_next(request)
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    """前端路由守卫用：要不要登录、当前是否已登录。"""
+    authed = auth.check_token(request.cookies.get(auth.COOKIE_NAME))
+    return {"required": auth.is_enabled(), "authenticated": authed or not auth.is_enabled()}
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: dict = Body(default=None)):
+    body = body or {}
+    if not auth.is_enabled():
+        return {"ok": True, "required": False}
+    if not auth.verify(body.get("username"), body.get("password")):
+        await asyncio.sleep(0.5)     # 稍微拖慢暴力猜口令
+        return JSONResponse(status_code=401, content={"ok": False, "error": "用户名或口令错误"})
+    resp = JSONResponse(content={"ok": True})
+    resp.set_cookie(
+        auth.COOKIE_NAME, auth.issue_token(),
+        max_age=auth.SESSION_MAX_AGE, httponly=True, samesite="lax", path="/",
+    )
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def auth_logout():
+    resp = JSONResponse(content={"ok": True})
+    resp.delete_cookie(auth.COOKIE_NAME, path="/")
+    return resp
+
+
 executor = ThreadPoolExecutor(max_workers=config.WORKER_THREADS)
 
 # 启动即加载模型（含 CUDA 设备选择，无 GPU 且强制 CUDA 时此处即报错）
 models = get_models()
+
+if not auth.is_enabled():
+    logger.warning("网页登录未启用：conf.ini [auth] 的 password 为空，任何人都能访问后台接口")
 
 
 @app.get("/health")
@@ -933,6 +979,11 @@ async def affect_sessions():
 
 @app.websocket("/ws/emotion")
 async def emotion_websocket(websocket: WebSocket):
+    # HTTP 中间件管不到 WebSocket，这里自己查一次会话 Cookie（浏览器握手时会带上）
+    if auth.is_enabled() and not auth.check_token(websocket.cookies.get(auth.COOKIE_NAME)):
+        await websocket.close(code=1008)     # policy violation
+        return
+
     await websocket.accept()
     logger.info("WebSocket 连接建立")
 

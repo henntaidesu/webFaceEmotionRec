@@ -15,6 +15,16 @@ export default {
     comfyAffect: '情感偏好生成',
     log: '研究日志',
     settings: '系统设置',
+    logout: '退出登录',
+  },
+
+  login: {
+    desc: '服务已开放到公网，请先登录。',
+    username: '用户名',
+    password: '口令',
+    submit: '登录',
+    submitting: '登录中…',
+    error: '用户名或口令错误',
   },
 
   log: {

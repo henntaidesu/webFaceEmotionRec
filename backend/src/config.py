@@ -20,6 +20,16 @@ PORT = int(os.getenv("BACKEND_PORT", "9501"))
 # 而头显要的路径全在 /api 下。这个值要和 Unity 侧 BackendConfig.DefaultBaseUrl 一致。
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://nas.makurochan.com:9500")
 
+# ── 网页登录 ──────────────────────────────────────────────────────
+# 服务已经开在公网上，训练/评测/删模型/系统设置这些接口不能谁都能调。
+# 口令**留空＝不启用登录**（本机调试）；实际值以 conf.ini [auth] 为准，改完即时生效。
+# 换口令会让已发出的会话全部失效（签名密钥就是从用户名+口令派生的）。
+# 注意站点是 http 明文：口令和会话 Cookie 在链路上都不加密，这挡的是顺手点进来
+# 的人，不是能抓包的攻击者——要真防住得上 HTTPS。
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+AUTH_SESSION_DAYS = float(os.getenv("AUTH_SESSION_DAYS", "7"))
+
 # ── 头显 USB 连接（仅本地调试用）───────────────────────────────────
 # 只在头显用数据线插在**本服务器**上时可用：建 adb 反向隧道、拉起应用。
 # 外网场景下头显在别人家的 NAT 后面，服务器连不进去，这套用不上——那时靠

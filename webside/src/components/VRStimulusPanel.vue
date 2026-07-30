@@ -181,6 +181,7 @@
           <span>目标：{{ curEmotionObj?.zh }}</span>
           <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
           <span>已生成：{{ loopStep }} 张</span>
+          <span>同步：{{ syncText }}</span>
         </div>
         <svg class="intensity-curve" viewBox="0 0 280 60" preserveAspectRatio="none">
           <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
@@ -193,6 +194,7 @@
           <span class="progress-node">{{ progress.current }}/{{ progress.max }}</span>
         </div>
         <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
+        <p v-if="pushWarn" class="status-msg msg-error">{{ pushWarn }}</p>
         <p v-if="dbWarn" class="status-msg msg-error">{{ dbWarn }}</p>
         <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
         <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" readonly
@@ -442,6 +444,10 @@ const loopRunning = ref(false)
 const loopStep = ref(0)
 const loopStatus = ref('')
 const dbWarn = ref('')                 // 入库失败提示（闭环照跑，但要提示）
+// 推送头显失败提示。这一步（/api/stimulus/save show=true）是头显能看到新图的**唯一**途径：
+// 它失败后端就不会把图标记为「当前」，version 不涨，头显永远停在上一张。
+// 以前这里是 catch {} 静默吞掉的，表现成「网页有图、头显不动」且毫无线索——必须让人看见。
+const pushWarn = ref('')
 const loopSessionId = ref('')
 const latestIntensity = ref(0)
 const intensitySeries = reactive([])   // 目标情绪强度随时间的曲线点 [{ v }]
@@ -484,6 +490,7 @@ watchAndPush(() => loopMode.value, 'mode')
 watchAndPush(() => Number(targetIntensity.value), 'target_intensity')
 watchAndPush(() => Number(measureWindowSec.value), 'measure_window_s')
 watchAndPush(() => subjectId.value, 'subject_id')
+watchAndPush(() => Number(seed.value), 'seed')   // 漏过：seed 在共享状态里，两边都要跟
 watch(() => ({ ...sel }), (v) => { if (!applyingRemote) pushControl({ scene: v }) }, { deep: true })
 
 // 远端状态 → 本地控件
@@ -494,6 +501,7 @@ function applyControl(c) {
   if (typeof c.target_intensity === 'number') targetIntensity.value = c.target_intensity
   if (typeof c.measure_window_s === 'number') measureWindowSec.value = c.measure_window_s
   if (c.subject_id) subjectId.value = c.subject_id
+  if (typeof c.seed === 'number') seed.value = c.seed
   if (c.scene) for (const k of ['time', 'place', 'task', 'event']) {
     if (typeof c.scene[k] === 'number') sel[k] = c.scene[k]
   }
@@ -501,6 +509,14 @@ function applyControl(c) {
   // 放到微任务之后再解锁，确保上面这些赋值触发的 watch 都已跳过
   nextTick(() => { applyingRemote = false })
 }
+
+// 同步指示：最后一次改动来自哪一边 + 版本号。没有它就算两边真同步了也看不出来，
+// 「头显改了网页没反应」和「同步了但我没注意」分不开。
+const syncText = computed(() => {
+  if (ctlVersion.value < 0) return '—'
+  const who = ctlSource.value === 'vr' ? '头显' : ctlSource.value === 'web' ? '网页' : '初始'
+  return `${who} · v${ctlVersion.value}`
+})
 
 async function pollControl() {
   try {
@@ -663,7 +679,10 @@ async function runLoop() {
         savedPath = s.path.replace(/\\/g, '/')
         savedUrl = `/api/stimulus/files/${savedPath.replace(/^image\//, '')}`
       }
-    } catch { /* 忽略存盘失败 */ }
+      pushWarn.value = ''
+    } catch (e) {
+      pushWarn.value = `第 ${loopStep.value + 1} 张推送头显失败：${e.message}（头显会停在上一张）`
+    }
     // 记录刺激事件（含调制元数据，供后期预测分析）
     try {
       await recordImage({
@@ -707,6 +726,7 @@ async function startLoop({ fromRemote = false } = {}) {
   }
   loopStatus.value = ''
   dbWarn.value = ''
+  pushWarn.value = ''
   try {
     const r = await startAffectSession(subjectId.value || 'anon', {
       page: 'stimulus', mode: loopMode.value,
