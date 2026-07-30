@@ -116,6 +116,33 @@ _state = {
 }
 
 
+# ── 头显在线状态（心跳）────────────────────────────────────────────
+# 外网场景下头显和笔记本都在别人家的 NAT 后面，服务器主动连不进去，adb 那套完全不适用。
+# 唯一可靠的在线信号是头显应用**自己往外发**的请求：VRStimulusControlPanel 每秒
+# GET 一次 /api/stimulus/control（它是 RuntimeInitializeOnLoadMethod 自动起的，
+# 只要应用在跑就一定在轮询），带上 client=vr 即可当心跳用，不需要额外协议。
+_HEARTBEAT_TIMEOUT_S = 5.0
+_last_seen_ms = 0
+
+
+def mark_seen() -> None:
+    """记一次头显心跳。"""
+    global _last_seen_ms
+    _last_seen_ms = int(time.time() * 1000)
+
+
+def presence() -> dict:
+    """头显在不在线：最近一次心跳在 _HEARTBEAT_TIMEOUT_S 内就算在线。"""
+    now_ms = int(time.time() * 1000)
+    age_s = (now_ms - _last_seen_ms) / 1000.0 if _last_seen_ms else None
+    return {
+        "online": age_s is not None and age_s <= _HEARTBEAT_TIMEOUT_S,
+        "last_seen_ms": _last_seen_ms or None,
+        "age_s": round(age_s, 1) if age_s is not None else None,
+        "timeout_s": _HEARTBEAT_TIMEOUT_S,
+    }
+
+
 def _clamp(v, lo, hi, default):
     try:
         f = float(v)

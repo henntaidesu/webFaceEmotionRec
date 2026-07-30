@@ -14,11 +14,23 @@ def _env_flag(name: str, default: bool) -> bool:
 HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
 PORT = int(os.getenv("BACKEND_PORT", "9501"))
 
-# ── 头显 USB 连接（adb 反向隧道，网页驱动）─────────────────────────
-# 用数据线连头显：后端用 adb 建反向隧道，头显访问 localhost:PORT 经 USB 直达后端，
-# 免 WiFi/同网段/防火墙。ADB_PATH 留空则自动在常见位置（含 MQDH）与 PATH 查找。
+# ── 本服务的公网地址 ──────────────────────────────────────────────
+# 头显和笔记本都会被带到外网使用，服务器留在家里：所以两边都是**主动连它**。
+# 对外只开放 9500（网页端口），后端 9501 不暴露——Vite 把 /api、/ws、/health 反代过去，
+# 而头显要的路径全在 /api 下。这个值要和 Unity 侧 BackendConfig.DefaultBaseUrl 一致。
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://nas.makurochan.com:9500")
+
+# ── 头显 USB 连接（仅本地调试用）───────────────────────────────────
+# 只在头显用数据线插在**本服务器**上时可用：建 adb 反向隧道、拉起应用。
+# 外网场景下头显在别人家的 NAT 后面，服务器连不进去，这套用不上——那时靠
+# PUBLIC_BASE_URL 直连 + 应用心跳判断在线（见 use_web/stimulus_control.presence）。
+# ADB_PATH 留空则自动在常见位置（含 MQDH）与 PATH 查找。
 ADB_PATH = os.getenv("ADB_PATH", "")
 HEADSET_PACKAGE = os.getenv("HEADSET_PACKAGE", "com.DefaultCompany.webFaceEmotionRec2")
+# 头显 adb 的网络地址（同一局域网调试时可填）；留空＝只用插在本机的数据线。
+HEADSET_ADB_ADDRESS = os.getenv("HEADSET_ADB_ADDRESS", "")
+# 头显 adbd 的监听端口（一次性 `adb tcpip <port>` 设定，见 headset.enable_tcpip）
+ADB_TCPIP_PORT = int(os.getenv("ADB_TCPIP_PORT", "10020"))
 
 # ── 头显视角 WebRTC 点对点回传 ────────────────────────────────────
 # 画面走头显↔浏览器直连，后端只转交 SDP（几 KB），不经手任何像素。

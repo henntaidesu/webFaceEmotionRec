@@ -1,25 +1,18 @@
 /**
- * 头显 USB 连接（后端用 adb 反向隧道，网页驱动）。
- * 连上后，头显里 Unity 应用把后端地址设为 http://127.0.0.1:9501 即经数据线直达后端。
+ * 头显在线状态。
+ *
+ * 头显和笔记本都会被带到外网，服务器留在家里——两边都在别人家的 NAT 后面，服务器
+ * **主动连不进去**，所以 adb（无论 USB 还是 adb connect）在真实场景下都用不上。
+ * 唯一可靠的在线信号是头显应用自己往外发的请求：它每秒 GET 一次
+ * /api/stimulus/control?client=vr，后端记下时间戳，这里读回来判断在不在线。
+ *
+ * 同理，「远程拉起头显里的应用」做不到——没有 adb 就没有远程启动的手段，
+ * 必须有人在头显里点开应用。
  */
 
-/** 查询头显 USB 连接状态。 */
-export async function getHeadsetStatus() {
-  const r = await fetch('/api/headset/status')
-  if (!r.ok) throw new Error(`headset status failed [${r.status}]`)
-  return r.json()
-}
-
-/**
- * 连接头显：建立 adb 反向隧道（+可选启动应用）。
- * @param {boolean} launch 连上后是否自动启动头显里的应用
- */
-export async function connectHeadset(launch = true) {
-  const r = await fetch('/api/headset/connect', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ launch }),
-  })
-  if (!r.ok) throw new Error(`headset connect failed [${r.status}]`)
+/** 头显应用是否在线 + 它该连的服务器地址。 */
+export async function getHeadsetPresence() {
+  const r = await fetch('/api/headset/presence')
+  if (!r.ok) throw new Error(`headset presence failed [${r.status}]`)
   return r.json()
 }

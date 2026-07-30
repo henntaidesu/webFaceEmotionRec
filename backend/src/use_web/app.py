@@ -339,14 +339,20 @@ async def stimulus_options():
 
 
 @app.get("/api/stimulus/control")
-async def stimulus_control_get():
+async def stimulus_control_get(client: str | None = None):
+    """当前控制状态。头显带 client=vr，顺便当作在线心跳记下来。"""
+    if client == "vr":
+        stimulus_control.mark_seen()
     return stimulus_control.get_control()
 
 
 @app.post("/api/stimulus/control")
 async def stimulus_control_post(body: dict = Body(default=None)):
     """局部更新控制状态：只传要改的字段，非法值忽略。source 传 "web" 或 "vr"。"""
-    return stimulus_control.update_control(body or {})
+    body = body or {}
+    if str(body.get("source") or "").lower() == "vr":
+        stimulus_control.mark_seen()
+    return stimulus_control.update_control(body)
 
 
 @app.get("/api/stimulus/current")
@@ -396,25 +402,48 @@ async def stimulus_show(body: dict = Body(default=None)):
     return {"ok": True, "version": _current_stimulus["version"], "url": _current_stimulus["url"]}
 
 
-# ── 头显 USB 连接（网页驱动 adb 反向隧道）─────────────────────────────
+# ── 头显在线状态（外网可用的唯一途径：应用自己的心跳）──────────────────
+# 头显和笔记本都会被带到外网，服务器主动连不进它们的 NAT，所以 adb 那套在真实场景下
+# 用不了（下面的 /api/headset/* 只在头显插在本服务器上做本地调试时有意义）。
+@app.get("/api/headset/presence")
+async def headset_presence():
+    """头显应用在不在线，以及它该连的服务器地址（打包进 APK 的那个）。"""
+    return {**stimulus_control.presence(), "base_url": config.PUBLIC_BASE_URL}
+
+
+# ── 头显 USB 连接（仅本地调试：头显需插在本服务器上）───────────────────────
 @app.get("/api/headset/status")
-async def headset_status():
-    """网页轮询头显 USB 连接状态：adb 是否找到、设备是否连接/授权、隧道是否建立、应用是否在跑。"""
-    # adb 子进程可能阻塞数十秒；放线程池，避免冻结事件循环（含 /ws/emotion 实时流）。
+async def headset_status(address: str | None = None):
+    """网页轮询头显状态：adb 是否找到、设备是否连上/授权、应用是否装了/在跑。
+
+    address 省略则用 config.HEADSET_ADB_ADDRESS（公网 adb）；传空串则只看数据线设备。
+    """
+    # adb 子进程可能阻塞数十秒（跨公网更慢）；放线程池，避免冻结事件循环（含 /ws/emotion 实时流）。
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, headset.status, config.PORT, config.HEADSET_PACKAGE
+        executor, headset.status, config.PORT, config.HEADSET_PACKAGE, address
     )
 
 
 @app.post("/api/headset/connect")
 async def headset_connect(body: dict = Body(default=None)):
-    """网页「连接头显」：用数据线建立 adb 反向隧道（头显 localhost:PORT → 后端），可选启动应用。"""
+    """网页「连接头显」：adb connect 到头显（公网或本机数据线）并把应用拉起来。"""
     body = body or {}
     launch = bool(body.get("launch", True))
+    address = body.get("address")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, headset.connect, config.PORT, config.HEADSET_PACKAGE, launch
+        executor, headset.connect, config.PORT, config.HEADSET_PACKAGE, launch, address
+    )
+
+
+@app.post("/api/headset/tcpip")
+async def headset_tcpip(body: dict = Body(default=None)):
+    """把插在**本机数据线**上的头显切到 TCP 调试（公网 adb 的一次性前提）。"""
+    port = (body or {}).get("port")
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, headset.enable_tcpip, int(port) if port else None
     )
 
 

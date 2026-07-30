@@ -19,202 +19,205 @@
     <div class="comfy-body">
       <!-- 左侧：配置区（滚动） -->
       <div class="config-col">
-      <!-- 离线提示 -->
-      <div v-if="!online" class="offline-box">
+      <!-- 离线提示：只是一条横幅，不再顶掉整个配置区。
+           头显连接 / 刺激种子 / 闭环参数 / 出图参数都不依赖 ComfyUI，离线也要能看能改；
+           真正需要 ComfyUI 在线的只有「开始生成图片」，那一颗单独禁用。 -->
+      <div v-if="!online" class="offline-bar">
         <span class="offline-icon">⚡</span>
-        <p class="offline-title">{{ locale.comfyDisconnected }}</p>
-        <p class="offline-hint">{{ locale.stimulus.offlineHint }}</p>
+        <div class="offline-text">
+          <p class="offline-title">{{ locale.comfyDisconnected }}</p>
+          <p class="offline-hint">{{ locale.stimulus.offlineHint }}</p>
+        </div>
         <button class="btn-retry" @click="retryConn">{{ locale.comfyRetry }}</button>
       </div>
 
-      <template v-else>
-        <!-- ① 头显连接 -->
-        <section class="sec">
-          <div class="sec-title">① 头显连接</div>
-          <div class="headset-bar">
-            <span class="hs-title">🔌 {{ locale.stimulus.hsTitle }}</span>
-            <span class="hs-status" :class="headset.ok ? 'hs-ok' : 'hs-bad'">{{ headsetText }}</span>
-            <button class="hs-btn" :disabled="headset.busy" @click="doConnectHeadset">
-              {{ headset.busy ? locale.stimulus.hsConnecting : locale.stimulus.hsConnect }}
-            </button>
-            <button class="hs-btn hs-ghost" :disabled="headset.busy" @click="refreshHeadset">
-              {{ locale.stimulus.hsRefresh }}
-            </button>
-          </div>
-          <p class="hs-hint no-mb">{{ locale.stimulus.hsHint }}</p>
-        </section>
+      <!-- ① 头显连接：外网下服务器连不进头显的 NAT，只能等头显应用自己来报到 -->
+      <section class="sec">
+        <div class="sec-title">① 头显连接</div>
+        <div class="headset-bar">
+          <span class="hs-title">🥽 {{ locale.stimulus.hsTitle }}</span>
+          <span class="hs-status" :class="headset.online ? 'hs-ok' : 'hs-bad'">{{ headsetText }}</span>
+          <button class="hs-btn hs-ghost" :disabled="headset.busy" @click="refreshHeadset">
+            {{ locale.stimulus.hsRefresh }}
+          </button>
+        </div>
+        <p class="hs-hint no-mb">
+          {{ locale.stimulus.hsHint }}
+          <span v-if="headset.baseUrl" class="hs-addr">{{ headset.baseUrl }}</span>
+        </p>
+        <p v-if="!headset.online" class="hs-hint hs-warn no-mb">{{ locale.stimulus.hsOfflineHint }}</p>
+      </section>
 
-        <!-- ② 刺激种子：目标情绪 + 场景四要素（组合喂 DeepSeek 动态生成提示词）-->
-        <section class="sec">
-          <div class="sec-title">② 刺激种子</div>
+      <!-- ② 刺激种子：目标情绪 + 场景四要素（组合喂 DeepSeek 动态生成提示词）-->
+      <section class="sec">
+        <div class="sec-title">② 刺激种子</div>
+        <div class="field">
+          <label class="field-label">{{ locale.stimulus.emotion }}</label>
+          <div class="preset-btns">
+            <button
+              v-for="e in emotions"
+              :key="e.key"
+              class="preset-btn"
+              :class="{ active: selectedEmotion === e.key }"
+              @click="selectEmotion(e.key)"
+            >{{ e.label }}</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label-row">
+            <label class="field-label">{{ locale.stimulus.scene }}</label>
+            <button class="use-emotion-btn" @click="randomScene">{{ locale.stimulus.pick }}</button>
+          </div>
+          <div class="two-col scene-dims">
+            <div class="dim-field" v-for="dim in sceneDims" :key="dim.key">
+              <label class="dim-label">{{ dimLabel(dim) }}</label>
+              <select v-model.number="sel[dim.key]" class="ctrl-select">
+                <option v-for="(o, i) in dim.items" :key="i" :value="i">{{ optLabel(o) }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ 闭环参数：DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈 -->
+      <section class="sec">
+        <div class="sec-title">③ 闭环参数</div>
+        <p class="hs-hint">情绪+场景为种子 → DeepSeek 按实时强度动态生成提示词 → 出图推头显 → 采集情绪变化写库</p>
+        <div class="two-col">
           <div class="field">
-            <label class="field-label">{{ locale.stimulus.emotion }}</label>
+            <label class="field-label">调制模式</label>
+            <select v-model="loopMode" class="ctrl-select">
+              <option v-for="m in LOOP_MODES" :key="m.key" :value="m.key">{{ m.zh }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label">目标强度（0–1，仅目标带调节用）</label>
+            <input type="number" v-model.number="targetIntensity" class="ctrl-num" min="0" max="1" step="0.05" />
+          </div>
+          <div class="field">
+            <label class="field-label">受试者 ID</label>
+            <input type="text" v-model="subjectId" class="ctrl-num" />
+          </div>
+          <div class="field">
+            <label class="field-label">观看/测量窗（秒）</label>
+            <input type="number" v-model.number="measureWindowSec" class="ctrl-num" min="2" max="60" />
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 出图参数：设一次即可，默认折叠省空间 -->
+      <details class="sec sec-fold">
+        <summary class="sec-title">④ 出图参数（{{ gen.width }}×{{ genHeight }} · {{ gen.steps }} steps · CFG {{ gen.cfg }}）</summary>
+        <div class="sec-fold-body">
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.resolution }}（2:1）</label>
             <div class="preset-btns">
               <button
-                v-for="e in emotions"
-                :key="e.key"
+                v-for="p in RES_PRESETS"
+                :key="p"
                 class="preset-btn"
-                :class="{ active: selectedEmotion === e.key }"
-                @click="selectEmotion(e.key)"
-              >{{ e.label }}</button>
+                :class="{ active: gen.width === p }"
+                @click="gen.width = p"
+              >{{ p }}×{{ p / 2 }}</button>
+            </div>
+            <div class="row-group">
+              <input type="number" v-model.number="gen.width" class="ctrl-num seed-input" min="512" max="4096" step="64" @change="normalizeRes" />
+              <span class="seed-hint">× {{ genHeight }} {{ locale.stimulus.resHint }}</span>
             </div>
           </div>
-          <div class="field">
-            <div class="field-label-row">
-              <label class="field-label">{{ locale.stimulus.scene }}</label>
-              <button class="use-emotion-btn" @click="randomScene">{{ locale.stimulus.pick }}</button>
-            </div>
-            <div class="two-col scene-dims">
-              <div class="dim-field" v-for="dim in sceneDims" :key="dim.key">
-                <label class="dim-label">{{ dimLabel(dim) }}</label>
-                <select v-model.number="sel[dim.key]" class="ctrl-select">
-                  <option v-for="(o, i) in dim.items" :key="i" :value="i">{{ optLabel(o) }}</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ③ 闭环参数：DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈 -->
-        <section class="sec">
-          <div class="sec-title">③ 闭环参数</div>
-          <p class="hs-hint">情绪+场景为种子 → DeepSeek 按实时强度动态生成提示词 → 出图推头显 → 采集情绪变化写库</p>
           <div class="two-col">
             <div class="field">
-              <label class="field-label">调制模式</label>
-              <select v-model="loopMode" class="ctrl-select">
-                <option v-for="m in LOOP_MODES" :key="m.key" :value="m.key">{{ m.zh }}</option>
+              <label class="field-label">{{ locale.stimulus.steps }}</label>
+              <input type="number" v-model.number="gen.steps" class="ctrl-num" min="1" max="100" />
+            </div>
+            <div class="field">
+              <label class="field-label">CFG</label>
+              <input type="number" v-model.number="gen.cfg" class="ctrl-num" min="0" max="30" step="0.1" />
+            </div>
+            <div class="field">
+              <label class="field-label">{{ locale.stimulus.sampler }}</label>
+              <select v-model="gen.sampler" class="ctrl-select">
+                <option v-for="s in SAMPLERS" :key="s" :value="s">{{ s }}</option>
               </select>
             </div>
             <div class="field">
-              <label class="field-label">目标强度（0–1，仅目标带调节用）</label>
-              <input type="number" v-model.number="targetIntensity" class="ctrl-num" min="0" max="1" step="0.05" />
-            </div>
-            <div class="field">
-              <label class="field-label">受试者 ID</label>
-              <input type="text" v-model="subjectId" class="ctrl-num" />
-            </div>
-            <div class="field">
-              <label class="field-label">观看/测量窗（秒）</label>
-              <input type="number" v-model.number="measureWindowSec" class="ctrl-num" min="2" max="60" />
+              <label class="field-label">{{ locale.stimulus.scheduler }}</label>
+              <select v-model="gen.scheduler" class="ctrl-select">
+                <option v-for="s in SCHEDULERS" :key="s" :value="s">{{ s }}</option>
+              </select>
             </div>
           </div>
-        </section>
-
-        <!-- ④ 出图参数：设一次即可，默认折叠省空间 -->
-        <details class="sec sec-fold">
-          <summary class="sec-title">④ 出图参数（{{ gen.width }}×{{ genHeight }} · {{ gen.steps }} steps · CFG {{ gen.cfg }}）</summary>
-          <div class="sec-fold-body">
-            <div class="field">
-              <label class="field-label">{{ locale.stimulus.resolution }}（2:1）</label>
-              <div class="preset-btns">
-                <button
-                  v-for="p in RES_PRESETS"
-                  :key="p"
-                  class="preset-btn"
-                  :class="{ active: gen.width === p }"
-                  @click="gen.width = p"
-                >{{ p }}×{{ p / 2 }}</button>
-              </div>
-              <div class="row-group">
-                <input type="number" v-model.number="gen.width" class="ctrl-num seed-input" min="512" max="4096" step="64" @change="normalizeRes" />
-                <span class="seed-hint">× {{ genHeight }} {{ locale.stimulus.resHint }}</span>
-              </div>
-            </div>
-            <div class="two-col">
-              <div class="field">
-                <label class="field-label">{{ locale.stimulus.steps }}</label>
-                <input type="number" v-model.number="gen.steps" class="ctrl-num" min="1" max="100" />
-              </div>
-              <div class="field">
-                <label class="field-label">CFG</label>
-                <input type="number" v-model.number="gen.cfg" class="ctrl-num" min="0" max="30" step="0.1" />
-              </div>
-              <div class="field">
-                <label class="field-label">{{ locale.stimulus.sampler }}</label>
-                <select v-model="gen.sampler" class="ctrl-select">
-                  <option v-for="s in SAMPLERS" :key="s" :value="s">{{ s }}</option>
-                </select>
-              </div>
-              <div class="field">
-                <label class="field-label">{{ locale.stimulus.scheduler }}</label>
-                <select v-model="gen.scheduler" class="ctrl-select">
-                  <option v-for="s in SCHEDULERS" :key="s" :value="s">{{ s }}</option>
-                </select>
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">{{ locale.stimulus.seed }}</label>
-              <div class="row-group">
-                <input type="number" v-model.number="seed" class="ctrl-num seed-input" min="-1" />
-                <button class="icon-btn" :title="locale.stimulus.randomSeed" @click="seed = -1">🎲</button>
-                <span class="seed-hint">{{ seed < 0 ? locale.stimulus.randomSeedHint : '' }}</span>
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">{{ locale.stimulus.negative }}</label>
-              <textarea v-model="negative" class="ctrl-textarea" rows="2" />
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.seed }}</label>
+            <div class="row-group">
+              <input type="number" v-model.number="seed" class="ctrl-num seed-input" min="-1" />
+              <button class="icon-btn" :title="locale.stimulus.randomSeed" @click="seed = -1">🎲</button>
+              <span class="seed-hint">{{ seed < 0 ? locale.stimulus.randomSeedHint : '' }}</span>
             </div>
           </div>
-        </details>
-
-        <!-- 开始闭环 + 查看历史图片（同一行）-->
-        <div class="action-row">
-          <button
-            class="btn-generate"
-            :class="{ 'btn-stop': loopRunning }"
-            :disabled="!loopRunning && !online"
-            @click="toggleLoop"
-          >{{ loopRunning ? '■ 停止生成' : '▶ 开始生成图片' }}</button>
-          <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
+          <div class="field">
+            <label class="field-label">{{ locale.stimulus.negative }}</label>
+            <textarea v-model="negative" class="ctrl-textarea" rows="2" />
+          </div>
         </div>
+      </details>
 
-        <!-- ⑤ 闭环运行状态：指标 / 强度曲线 / 当前提示词 / 最新一张 -->
-        <section class="sec">
-          <div class="sec-title">⑤ 运行状态</div>
-          <div class="loop-meta">
-            <span>目标：{{ curEmotionObj?.zh }}</span>
-            <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
-            <span>已生成：{{ loopStep }} 张</span>
-          </div>
-          <svg class="intensity-curve" viewBox="0 0 280 60" preserveAspectRatio="none">
-            <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
-            <polyline v-if="curvePath" :points="curvePath" class="curve-line" />
-          </svg>
-          <div v-if="loopRunning && progress.max > 0" class="progress-wrap">
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
-            </div>
-            <span class="progress-node">{{ progress.current }}/{{ progress.max }}</span>
-          </div>
-          <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
-          <p v-if="dbWarn" class="status-msg msg-error">{{ dbWarn }}</p>
-          <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
-          <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" readonly
-                    :placeholder="'当前提示词由 DeepSeek 按情绪+场景动态生成（开始闭环后显示）'" />
-          <div v-if="results.length > 0" class="result-area">
-            <div class="result-header">
-              <span class="result-label">{{ locale.stimulus.result }}（{{ results.length }}）</span>
-              <div class="result-actions">
-                <label class="dwell-label">
-                  {{ locale.stimulus.dwell }}
-                  <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
-                </label>
-                <button class="use-emotion-btn" @click="startSession()">{{ locale.stimulus.sessionStart }}</button>
-                <button class="clear-btn" @click="results = []">✕</button>
-              </div>
-            </div>
-            <div class="result-grid">
-              <div v-for="(img, i) in results" :key="i" class="result-item">
-                <img :src="img.url" class="result-img" :title="locale.stimulus.fullscreen" @click="panoSrc = img.url" />
-                <span class="emo-tag">{{ img.label }}</span>
-                <a :href="img.url" download class="dl-btn" :title="locale.stimulus.download">↓</a>
-              </div>
-            </div>
-          </div>
-        </section>
+      <!-- 开始闭环 + 查看历史图片（同一行）-->
+      <div class="action-row">
+        <button
+          class="btn-generate"
+          :class="{ 'btn-stop': loopRunning }"
+          :disabled="!loopRunning && !online"
+          :title="online ? '' : locale.stimulus.offlineHint"
+          @click="toggleLoop"
+        >{{ loopRunning ? '■ 停止生成' : '▶ 开始生成图片' }}</button>
+        <button class="btn-history" @click="openHistory">🕑 {{ locale.stimulus.historyBtn }}</button>
+      </div>
 
-      </template>
+      <!-- ⑤ 闭环运行状态：指标 / 强度曲线 / 当前提示词 / 最新一张 -->
+      <section class="sec">
+        <div class="sec-title">⑤ 运行状态</div>
+        <div class="loop-meta">
+          <span>目标：{{ curEmotionObj?.zh }}</span>
+          <span>实时强度：{{ (latestIntensity * 100).toFixed(0) }}%</span>
+          <span>已生成：{{ loopStep }} 张</span>
+        </div>
+        <svg class="intensity-curve" viewBox="0 0 280 60" preserveAspectRatio="none">
+          <line x1="0" :y1="60 - targetIntensity * 60" x2="280" :y2="60 - targetIntensity * 60" class="target-line" />
+          <polyline v-if="curvePath" :points="curvePath" class="curve-line" />
+        </svg>
+        <div v-if="loopRunning && progress.max > 0" class="progress-wrap">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: progressPct + '%' }"></div>
+          </div>
+          <span class="progress-node">{{ progress.current }}/{{ progress.max }}</span>
+        </div>
+        <p v-if="loopStatus" class="hs-hint loop-status">{{ loopStatus }}</p>
+        <p v-if="dbWarn" class="status-msg msg-error">{{ dbWarn }}</p>
+        <p v-if="statusMsg" class="status-msg" :class="statusMsgClass">{{ statusMsg }}</p>
+        <textarea v-model="currentPrompt" class="ctrl-textarea" rows="3" readonly
+                  :placeholder="'当前提示词由 DeepSeek 按情绪+场景动态生成（开始闭环后显示）'" />
+        <div v-if="results.length > 0" class="result-area">
+          <div class="result-header">
+            <span class="result-label">{{ locale.stimulus.result }}（{{ results.length }}）</span>
+            <div class="result-actions">
+              <label class="dwell-label">
+                {{ locale.stimulus.dwell }}
+                <input type="number" v-model.number="session.dwell" class="dwell-input" min="2" max="60" />
+              </label>
+              <button class="use-emotion-btn" @click="startSession()">{{ locale.stimulus.sessionStart }}</button>
+              <button class="clear-btn" @click="results = []">✕</button>
+            </div>
+          </div>
+          <div class="result-grid">
+            <div v-for="(img, i) in results" :key="i" class="result-item">
+              <img :src="img.url" class="result-img" :title="locale.stimulus.fullscreen" @click="panoSrc = img.url" />
+              <span class="emo-tag">{{ img.label }}</span>
+              <a :href="img.url" download class="dl-btn" :title="locale.stimulus.download">↓</a>
+            </div>
+          </div>
+        </div>
+      </section>
       </div>
 
       <!-- 右侧：头显视角（一直显示，不折叠） -->
@@ -320,7 +323,7 @@ import {
   COMFYUI_HOST,
 } from '../api/comfyuiApi.js'
 import { saveStimulusImage, reportStimulusProgress } from '../api/vrStimulus.js'
-import { getHeadsetStatus, connectHeadset } from '../api/headset.js'
+import { getHeadsetPresence } from '../api/headset.js'
 import { createHeadsetViewLink } from '../api/headsetRtc.js'
 import { fetchFeaLatest, startSession as startAffectSession, stopSession as stopAffectSession, recordImage, generateScenePrompt } from '../api/affect.js'
 // 懒加载：three.js 仅在打开 360 查看器时才按需加载，保持首屏包体积
@@ -765,44 +768,31 @@ const statusMsgClass = ref('')
 const results    = ref([]) // { url, emotion, label }
 const panoSrc    = ref(null)
 
-// ── 头显 USB 连接（后端 adb 反向隧道）──
-const headset = reactive({ busy: false, status: null, ok: false, msg: '' })
+// ── 头显在线状态（心跳）──
+// 外网下头显连的是笔记本的 WiFi，和笔记本一起在别人家的 NAT 后面，服务器主动连不进来，
+// 所以没有「连接头显」这个动作可做——只能等头显应用自己来报到。它每秒 GET 一次
+// /api/stimulus/control?client=vr，后端记时间戳，这里轮询读回来。
+const headset = reactive({ busy: false, online: false, ageS: null, baseUrl: '', msg: '' })
+let headsetTimer = null
 
 const headsetText = computed(() => {
   const L = props.locale.stimulus
   if (headset.msg) return headset.msg
-  const s = headset.status
-  if (!s) return '—'
-  if (!s.adb_found) return L.hsNoAdb
-  if (s.unauthorized) return L.hsUnauth
-  if (!s.device_connected) return L.hsNoDevice
-  if (s.reverse_ok) return L.hsReady + (s.app_running ? L.hsAppRunning : '')
-  return L.hsConnect
+  if (!headset.online) return L.hsOffline
+  return L.hsOnline + (headset.ageS != null ? ` · ${headset.ageS}s` : '')
 })
 
 async function refreshHeadset() {
+  headset.busy = true
   try {
-    const s = await getHeadsetStatus()
-    headset.status = s
-    headset.ok = !!(s.device_connected && s.reverse_ok)
+    const p = await getHeadsetPresence()
+    headset.online = !!p.online
+    headset.ageS = p.age_s
+    headset.baseUrl = p.base_url || ''
     headset.msg = ''
   } catch (e) {
     headset.msg = e.message
-    headset.ok = false
-  }
-}
-
-async function doConnectHeadset() {
-  headset.busy = true
-  headset.msg = ''
-  try {
-    const r = await connectHeadset(true)
-    headset.status = r.status || headset.status
-    headset.ok = !!r.ok
-    if (!r.ok && r.error) headset.msg = r.error
-  } catch (e) {
-    headset.msg = e.message
-    headset.ok = false
+    headset.online = false
   } finally {
     headset.busy = false
   }
@@ -982,6 +972,8 @@ onMounted(async () => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
   refreshHeadset()
+  // 心跳超时 5s，3s 一轮足够及时反映头显掉线
+  headsetTimer = setInterval(refreshHeadset, 3000)
   headsetLink.start()
   await loadStimulusOptions()
   await pollControl()                          // 先对齐一次，再开始定期同步
@@ -991,6 +983,7 @@ onUnmounted(() => {
   clearInterval(connTimer)
   clearTimeout(sessionTimer)
   if (ctlTimer) { clearInterval(ctlTimer); ctlTimer = null }
+  if (headsetTimer) { clearInterval(headsetTimer); headsetTimer = null }
 })
 </script>
 
@@ -1086,18 +1079,21 @@ onUnmounted(() => {
 .sec-fold-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .no-mb { margin-bottom: 0; }
 
-.offline-box {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; text-align: center;
-  gap: 10px; padding: 40px 24px; color: var(--color-text-muted);
+.offline-bar {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 8px;
+  border: 1px solid rgba(240, 160, 160, 0.35);
+  background: rgba(240, 160, 160, 0.08);
+  color: var(--color-text-muted);
 }
-.offline-icon  { font-size: 2rem; }
-.offline-title { font-size: 1rem; font-weight: 600; color: var(--color-text); }
-.offline-hint  { font-size: 0.8rem; line-height: 1.6; max-width: 300px; }
+.offline-icon  { font-size: 1.3rem; }
+.offline-text  { flex: 1; min-width: 0; }
+.offline-title { font-size: 0.85rem; font-weight: 600; color: var(--color-text); }
+.offline-hint  { font-size: 0.75rem; line-height: 1.5; }
 .btn-retry {
-  margin-top: 6px; padding: 8px 22px; border-radius: 20px; border: none;
+  flex: none; padding: 7px 16px; border-radius: 20px; border: none;
   background: #2563eb; color: #fff;
-  font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
+  font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
 }
 .btn-retry:hover { opacity: 0.9; }
 
@@ -1302,6 +1298,8 @@ onUnmounted(() => {
 }
 .hs-status.hs-ok { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); background: rgba(74, 222, 128, 0.1); }
 .hs-status.hs-bad { color: #f0a0a0; border-color: rgba(240, 160, 160, 0.35); background: rgba(240, 160, 160, 0.08); }
+.hs-warn { color: #f0a0a0; margin-top: 4px; }
+.hs-addr { font-family: ui-monospace, monospace; opacity: 0.85; }
 .hs-btn {
   margin-left: auto; padding: 6px 16px; border-radius: 8px; border: none;
   background: #3b82f6; color: #fff; font-size: 0.85rem; cursor: pointer;
