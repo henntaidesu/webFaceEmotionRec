@@ -144,31 +144,67 @@ def insert_image(rec: dict) -> dict:
 
 
 # ── 检索（偏好闭环）───────────────────────────────────────────────────
-def recommend(emotions, k: int = 5, subject_id: str | None = None) -> dict:
-    """按当前情绪情境，检索最相似的「用户喜欢过」的生成图（pgvector L2 最近邻）。"""
+_REC_COLS = ["id", "dominant", "prompt", "negative", "scene", "image_url", "dist"]
+
+
+def recommend(emotions, k: int = 5, subject_id: str | None = None,
+              epsilon: float | None = None) -> dict:
+    """按当前情绪情境检索相似的生成图。
+
+    两处偏离原实现，都是为了让「偏好模型比随机好」这件事可被检验：
+    - **距离用 cosine（`<=>`）而非 L2**：context 是 7 类情绪概率，位于单纯形上，
+      L2 会把「强度」当成差异，cosine 才对应「情绪构成相似」。
+    - **保留 ε-探索**：默认 20% 的名额从全库随机取（不限于 liked），否则检索只在
+      「喜欢过」的集合里打转，探索崩溃，且无法与随机基线做 A/B。
+      liked 池为空时（例如刺激页从不写 liked），退化为纯随机而不是返回空列表。
+
+    每项带 `source`: exploit=最近邻 / explore=随机，便于下游做 A/B 与日志归因。
+    """
     _ensure_init()
     context = _context_from_emotions(emotions)
     if context is None:
         return {"items": []}
+    eps = config.AFFECT_EPSILON if epsilon is None else float(epsilon)
+    eps = min(max(eps, 0.0), 1.0)
+    k = max(0, int(k))
+    n_explore = int(round(k * eps))
+    n_exploit = k - n_explore
+
     qv = "[" + ",".join(f"{float(x):.6g}" for x in context) + "]"
     db = DatabaseManager()
-    if subject_id:
-        rows = db.execute_query(
-            'SELECT i.id, i.dominant, i.prompt, i.negative, i.scene, i.image_url, '
-            'i.context <-> %s::vector AS dist '
-            'FROM affect_image i JOIN affect_session s ON i.session_id = s.session_id '
-            'WHERE i.liked = true AND i.context IS NOT NULL AND s.subject_id = %s '
-            'ORDER BY i.context <-> %s::vector LIMIT %s',
-            (qv, subject_id, qv, k))
-    else:
-        rows = db.execute_query(
-            'SELECT id, dominant, prompt, negative, scene, image_url, '
-            'context <-> %s::vector AS dist '
-            'FROM affect_image WHERE liked = true AND context IS NOT NULL '
-            'ORDER BY context <-> %s::vector LIMIT %s',
-            (qv, qv, k))
-    cols = ["id", "dominant", "prompt", "negative", "scene", "image_url", "dist"]
-    return {"items": [dict(zip(cols, r)) for r in rows]}
+    join = " JOIN affect_session s ON i.session_id = s.session_id" if subject_id else ""
+    subj_cond = " AND s.subject_id = %s" if subject_id else ""
+
+    def _query(where, order, limit, extra_params=()):
+        sql = (f'SELECT i.id, i.dominant, i.prompt, i.negative, i.scene, i.image_url, '
+               f'i.context <=> %s::vector AS dist '
+               f'FROM affect_image i{join} '
+               f'WHERE i.context IS NOT NULL{subj_cond} {where} {order} LIMIT %s')
+        params = [qv] + ([subject_id] if subject_id else []) + list(extra_params) + [limit]
+        return db.execute_query(sql, tuple(params))
+
+    items, seen = [], set()
+    if n_exploit:
+        for r in _query("AND i.liked = true", "ORDER BY i.context <=> %s::vector",
+                        n_exploit, (qv,)):
+            d = dict(zip(_REC_COLS, r))
+            d["source"] = "exploit"
+            items.append(d)
+            seen.add(d["id"])
+
+    # 探索名额（含 exploit 未取满时的补位）从全库随机取，保证不与已选重复
+    want = k - len(items)
+    if want > 0:
+        for r in _query("", "ORDER BY random()", want + len(seen)):
+            d = dict(zip(_REC_COLS, r))
+            if d["id"] in seen:
+                continue
+            d["source"] = "explore"
+            items.append(d)
+            seen.add(d["id"])
+            if len(items) >= k:
+                break
+    return {"items": items, "epsilon": eps, "metric": "cosine"}
 
 
 def list_sessions(limit: int = 100) -> dict:

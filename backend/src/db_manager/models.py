@@ -82,7 +82,9 @@ class AffectImageModel(BaseModel):
     def get_indexes(cls):
         return [
             {"name": "idx_affect_image_liked", "columns": ["liked"]},
-            # pgvector 近邻检索索引（L2）
-            {"name": "idx_affect_image_context", "columns": ["context"],
-             "using": "hnsw", "opclass": "vector_l2_ops"},
+            # pgvector 近邻检索索引：与 pg_store.recommend 的 <=> 保持一致用 cosine。
+            # context 是 7 类情绪概率（单纯形上），L2 会把强度差当成情绪差，
+            # 且 opclass 与查询算子不一致时索引根本不会被用上。
+            {"name": "idx_affect_image_context_cos", "columns": ["context"],
+             "using": "hnsw", "opclass": "vector_cosine_ops"},
         ]

@@ -789,7 +789,9 @@ async def affect_recommend(body: dict = Body(default=None)):
     try:
         r = await loop.run_in_executor(
             executor,
-            lambda: pg_store.recommend(body.get("emotions"), k, body.get("subject_id")),
+            # epsilon 可选：留出 ε-探索名额，便于把「偏好检索 vs 随机」做成 A/B
+            lambda: pg_store.recommend(body.get("emotions"), k, body.get("subject_id"),
+                                       body.get("epsilon")),
         )
     except RuntimeError as e:
         return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})

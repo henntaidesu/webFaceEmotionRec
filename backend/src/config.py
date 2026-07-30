@@ -137,3 +137,7 @@ AFFECT_REACTION_WINDOW_S = float(os.getenv("AFFECT_REACTION_WINDOW_S", "6"))
 AFFECT_LIKE_THRESHOLD = float(os.getenv("AFFECT_LIKE_THRESHOLD", "0.15"))
 # 两次自动生成之间的冷却秒数（防抖）
 AFFECT_COOLDOWN_S = float(os.getenv("AFFECT_COOLDOWN_S", "10"))
+# 偏好检索的 ε-探索比例：这一比例的推荐名额从全库随机取，其余取最近邻。
+# 全部走最近邻会让检索只在「喜欢过」的集合里打转（探索崩溃），也就无法证明
+# 偏好模型优于随机——留出探索名额是做 A/B 的前提。
+AFFECT_EPSILON = float(os.getenv("AFFECT_EPSILON", "0.2"))

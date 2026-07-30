@@ -143,24 +143,55 @@ class SequencePredictor:
         self.model.load_state_dict(ckpt["model"])
         self.model.eval().to(device)
 
+    # 允许的窗口时长偏差：模型学到的是固定时间尺度，偏差过大就不该硬塞
+    _SPAN_TOL = (0.7, 1.4)
+
     def _resample(self, fea):
-        """把不定长 fea 窗口重采样/补齐到固定 seq_len 帧（每帧 63 维）。"""
+        """按**时间戳**把窗口重采样到 seq_len 帧，覆盖最后 window_s 秒。
+
+        原实现用 np.linspace(0, n-1, seq_len) 按下标插值，完全不看时间戳：同为 60 帧、
+        一个跨 2 秒一个跨 10 秒的窗口会得到完全相同的张量，模型训练时学到的时间尺度
+        在推理端被抹掉。这里改为按真实时间轴插值，并校验窗口时长。
+        """
         import numpy as np
-        arr = np.array([bs for _ts, bs in fea], dtype="float32")  # (n, 63)
-        n = len(arr)
-        idx = np.linspace(0, n - 1, self.seq_len)
-        lo = np.floor(idx).astype(int)
-        hi = np.minimum(lo + 1, n - 1)
-        frac = (idx - lo)[:, None]
-        return arr[lo] * (1 - frac) + arr[hi] * frac              # (seq_len, 63)
+
+        ts = np.array([t for t, _bs in fea], dtype="float64")
+        arr = np.array([bs for _ts, bs in fea], dtype="float32")
+        if len(arr) < 2:
+            raise ValueError("窗口至少需要 2 帧 FEA")
+        span_s = (ts[-1] - ts[0]) / 1000.0
+        lo, hi = self._SPAN_TOL
+        if span_s <= 0:
+            raise ValueError("窗口时间戳非法（时长为 0）")
+        if not (self.window_s * lo <= span_s <= self.window_s * hi):
+            raise ValueError(
+                f"窗口时长 {span_s:.2f}s 与模型训练窗口 {self.window_s:g}s 不匹配"
+                f"（允许 {self.window_s * lo:.2f}~{self.window_s * hi:.2f}s）")
+
+        # 以窗末为基准回溯 window_s 秒，落在采集起点之前的部分夹到起点
+        grid = np.linspace(ts[-1] - self.window_s * 1000.0, ts[-1], self.seq_len)
+        grid = np.clip(grid, ts[0], ts[-1])
+        out = np.empty((self.seq_len, arr.shape[1]), dtype="float32")
+        for k in range(arr.shape[1]):
+            out[:, k] = np.interp(grid, ts, arr[:, k])
+        return out
 
     def predict(self, window: dict, horizon_s: float):
         # horizon_s（请求值）被忽略：模型输出对应其训练 horizon（self.horizon_s）。
         fea = _parse_fea((window or {}).get("fea"))
         if not fea:
             return _neutral_response(self.horizon_s)
+        try:
+            x_np = self._resample(fea)
+        except ValueError as e:
+            # 窗口不合规时退回规则式基线，并如实标注——绝不把拉伸过的窗喂给模型
+            logger.warning("窗口不合规，回退规则式基线：%s", e)
+            r = _RULE.predict(window, self.horizon_s)
+            r["fallback"] = "rule"
+            r["fallback_reason"] = str(e)
+            return r
         torch = self._torch
-        x = torch.from_numpy(self._resample(fea)).unsqueeze(0).to(self._device)
+        x = torch.from_numpy(x_np).unsqueeze(0).to(self._device)
         with torch.no_grad():
             probs = torch.softmax(self.model(x)[0], dim=0).cpu().numpy()
         scores = {en: float(probs[i]) for i, en in enumerate(EN)}
@@ -181,9 +212,13 @@ def _load_sidecars():
         if entry.name.endswith(".json"):
             try:
                 with open(entry.path, encoding="utf-8") as f:
-                    out.append(json.load(f))
+                    m = json.load(f)
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning("读取预测模型元数据失败 %s: %s", entry.name, e)
+                continue
+            # 目录里可能有非模型 JSON（如 LOSO 评测报告），没有 id 就不是模型 sidecar
+            if isinstance(m, dict) and m.get("id"):
+                out.append(m)
     out.sort(key=lambda m: m.get("created_at", ""), reverse=True)
     return out
 
