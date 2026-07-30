@@ -12,15 +12,18 @@
         fea.csv        timestamp_ms, f0..f62      ← affect_fea（仅 fea 非空的行）
         stimulus.csv   onset_ms, image_id, target_emotion, offset_ms, dwell_ms
                                                   ← affect_image（供 block-level 分组）
-        selfreport.csv 表头占位（PG 链路没有逐张自评，见下方警告）
+        selfreport.csv timestamp_ms, image_id, label7, valence, arousal
+                                                  ← affect_selfreport（正式训练的真值）
 
 用法：
     python DataSet/export_pg_timeline.py --out Capture
+    python DataSet/export_pg_timeline.py --out Capture --require-selfreport
     python DataSet/export_pg_timeline.py --out Capture --subject p01 --dry-run
 
-注意：PG 链路没有采集自评（selfreport），导出的 selfreport.csv 只有表头。
-因此这批数据**只能**配合 --label-source fea 使用，而那是与 X 同源的循环标签，
-不能作为研究结论。要用于正式训练，需在采集端补上自评。脚本会显式警告。
+注意：没有自评的会话导出后 selfreport.csv 只有表头，这类数据只能配合
+--label-source fea（与 X 同源的循环标签）使用，而那已被切窗脚本默认拒绝。
+脚本会逐会话标出是否有自评，并可用 --require-selfreport 只导可训练的。
+让头显在每张刺激图后调 POST /api/affect/selfreport 即可补上。
 """
 import argparse
 import csv
@@ -103,7 +106,24 @@ def fetch_images(db, session_id):
     return [{"id": r[0], "ts_ms": int(r[1]), "dominant": r[2]} for r in rows]
 
 
-def write_session(out_root, sess, fea_rows, images, dry_run=False):
+def fetch_selfreport(db, session_id):
+    """affect_selfreport → 自评行。没有自评的会话不能用于正式训练。"""
+    try:
+        rows = db.execute_query(
+            'SELECT ts_ms, image_id, label7, valence, arousal FROM affect_selfreport '
+            'WHERE session_id = %s AND label7 IS NOT NULL ORDER BY ts_ms', (session_id,))
+    except Exception as e:                                   # noqa: BLE001
+        # 旧库还没有这张表（建表在首次 /api/affect/* 请求时才跑）
+        print(f"  [提示] 读 affect_selfreport 失败（可能表尚未创建）：{e}")
+        return []
+    out = []
+    for ts, image_id, label7, val, aro in rows:
+        out.append([int(ts), str(image_id or ""), str(label7),
+                    "" if val is None else int(val), "" if aro is None else int(aro)])
+    return out
+
+
+def write_session(out_root, sess, fea_rows, images, reports, dry_run=False):
     subject = _safe(sess["subject_id"], "anon")
     session_id = _safe(sess["session_id"], "s0")
     sess_dir = os.path.join(out_root, subject, session_id)
@@ -127,9 +147,10 @@ def write_session(out_root, sess, fea_rows, images, dry_run=False):
                         nxt if nxt is not None else "",
                         (nxt - im["ts_ms"]) if nxt is not None else ""])
 
-    # PG 链路没有自评，只写表头占位（prepare 脚本会因无标签而跳过 selfreport 模式）
     with open(os.path.join(sess_dir, "selfreport.csv"), "w", encoding="utf-8", newline="") as f:
-        csv.writer(f).writerow(_SELFREPORT_HEADER)
+        w = csv.writer(f)
+        w.writerow(_SELFREPORT_HEADER)
+        w.writerows(reports)
 
     meta = {
         "subject_id": subject,
@@ -139,8 +160,9 @@ def write_session(out_root, sess, fea_rows, images, dry_run=False):
         "source": "postgres",       # 标明这批来自 PG 链路，不是头显直采的 CSV
         "fea_dim": FEA_DIM,
         "emotion_order": config.TRAIN_CLASSES,
-        "counts": {"fea": len(fea_rows), "stimulus": len(images), "selfreport": 0},
-        "note": "由 DataSet/export_pg_timeline.py 从 affect_fea/affect_image 导出；无自评标签",
+        "counts": {"fea": len(fea_rows), "stimulus": len(images), "selfreport": len(reports)},
+        "trainable": bool(reports),  # 无自评 → 只能配循环标签，不可用于正式训练
+        "note": "由 DataSet/export_pg_timeline.py 从 affect_fea/affect_image/affect_selfreport 导出",
     }
     with open(os.path.join(sess_dir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
@@ -154,6 +176,8 @@ def main():
     ap.add_argument("--subject", default=None, help="只导出该受试者")
     ap.add_argument("--min-frames", type=int, default=100,
                     help="FEA 帧数少于该值的会话跳过（默认 100）")
+    ap.add_argument("--require-selfreport", action="store_true",
+                    help="只导出有自评的会话（无自评的时间轴无法用于正式训练）")
     ap.add_argument("--dry-run", action="store_true", help="只统计不写盘")
     args = ap.parse_args()
 
@@ -167,7 +191,7 @@ def main():
         print("[错误] affect_session 里没有会话" + (f"（subject={args.subject}）" if args.subject else ""))
         raise SystemExit(2)
 
-    total_f = total_i = written = skipped = 0
+    total_f = total_i = total_r = written = skipped = no_report = 0
     for sess in sessions:
         fea_rows = fetch_fea(db, sess["session_id"])
         if len(fea_rows) < args.min_frames:
@@ -175,23 +199,34 @@ def main():
             skipped += 1
             continue
         images = fetch_images(db, sess["session_id"])
-        d, nf, ni = write_session(args.out, sess, fea_rows, images, args.dry_run)
+        reports = fetch_selfreport(db, sess["session_id"])
+        if not reports:
+            no_report += 1
+        if args.require_selfreport and not reports:
+            print(f"[跳过] {sess['subject_id']}/{sess['session_id']}：无自评（--require-selfreport）")
+            skipped += 1
+            continue
+        d, nf, ni = write_session(args.out, sess, fea_rows, images, reports, args.dry_run)
         span = (fea_rows[-1][0] - fea_rows[0][0]) / 1000.0
         rate = (len(fea_rows) - 1) / span if span > 0 else 0
+        flag = "" if reports else "  ← 无自评，不可用于正式训练"
         print(f"[{'预览' if args.dry_run else '导出'}] {d}：{nf} 帧 FEA "
-              f"（{span:.0f}s，约 {rate:.1f}Hz）, {ni} 张刺激图")
+              f"（{span:.0f}s，约 {rate:.1f}Hz）, {ni} 张刺激图, {len(reports)} 条自评{flag}")
         total_f += nf
         total_i += ni
+        total_r += len(reports)
         written += 1
 
-    print(f"\n[完成] {written} 个会话，{total_f} 帧 FEA，{total_i} 张刺激图"
+    print(f"\n[完成] {written} 个会话，{total_f} 帧 FEA，{total_i} 张刺激图，{total_r} 条自评"
           + ("（dry-run，未写盘）" if args.dry_run else f" → {args.out}"))
     if skipped:
-        print(f"[提示] 跳过 {skipped} 个帧数不足的会话（--min-frames {args.min_frames}）")
-    if written:
-        print("\n[警告] PG 链路没有采集自评（selfreport.csv 为空），这批数据只能配合")
-        print("       --label-source fea 使用，而那是与 X 同源的循环标签，不能作为研究结论。")
-        print("       正式训练前请在采集端补上自评。")
+        print(f"[提示] 跳过 {skipped} 个会话")
+    if no_report:
+        print(f"\n[警告] {no_report} 个会话没有自评。自评是唯一独立于 FEA 的真值来源；")
+        print("       没有它，这批时间轴只能配 --label-source fea（与 X 同源的循环标签），")
+        print("       而那已被 prepare_timeline_dataset.py 默认拒绝。")
+        print("       请让头显在每张刺激图后上报 POST /api/affect/selfreport。")
+    if written and total_r:
         print(f"\n下一步：python DataSet/prepare_timeline_dataset.py --root {args.out} \\")
         print("            --out DataSet/timeline_sliced --label-source selfreport")
     raise SystemExit(0 if written else 1)

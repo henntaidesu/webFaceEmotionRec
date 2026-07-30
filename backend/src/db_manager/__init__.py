@@ -3,7 +3,8 @@
 from .database import DatabaseManager
 from .base_model import BaseModel
 from .manager import DBManager, init_database, get_db_manager
-from .models import AffectSessionModel, AffectFeaModel, AffectImageModel
+from .models import (AffectSessionModel, AffectFeaModel, AffectImageModel,
+                     AffectSelfReportModel)
 
 __all__ = [
     "DatabaseManager",
@@ -14,4 +15,5 @@ __all__ = [
     "AffectSessionModel",
     "AffectFeaModel",
     "AffectImageModel",
+    "AffectSelfReportModel",
 ]

@@ -4,7 +4,8 @@ from typing import List, Type
 
 from .base_model import BaseModel
 from .database import DatabaseManager
-from .models import AffectSessionModel, AffectFeaModel, AffectImageModel
+from .models import (AffectSessionModel, AffectFeaModel, AffectImageModel,
+                     AffectSelfReportModel)
 
 
 class DBManager:
@@ -16,6 +17,7 @@ class DBManager:
             AffectSessionModel,
             AffectFeaModel,
             AffectImageModel,
+            AffectSelfReportModel,
         ]
 
     def initialize_database(self) -> bool:

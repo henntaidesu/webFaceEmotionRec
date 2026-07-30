@@ -14,6 +14,7 @@ from .. import config
 from ..db_manager import (
     AffectFeaModel,
     AffectImageModel,
+    AffectSelfReportModel,
     AffectSessionModel,
     DatabaseManager,
     get_db_manager,
@@ -120,6 +121,49 @@ def insert_fea(session_id: str, rows: list) -> int:
     return AffectFeaModel.insert_many(prepared)
 
 
+def insert_selfreport(session_id: str, rows: list) -> int:
+    """批量写受试者自评。rows: [{ts_ms, image_id?, label7, valence?, arousal?, source?}]。
+
+    自评是**唯一独立于 FEA 的真值来源**：规则式 classify_fea 与 FEA 同源，不能既当输入
+    又当标签。没有这张表，PG 链路采到的时间轴就只能配循环标签，无法用于正式训练。
+    label7 非法的行拒绝写入，避免污染标签空间。
+    """
+    _ensure_init()
+    now = int(time.time() * 1000)
+    prepared, bad = [], 0
+    for r in rows or []:
+        label = str(r.get("label7") or "").strip().lower()
+        if label and label not in EMOTION_ORDER:
+            bad += 1
+            continue
+
+        def _clamp(v):
+            """SAM 取 1–9；越界或非数字一律记 None，不硬塞。"""
+            if v is None or v == "":
+                return None
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                return None
+            return iv if 1 <= iv <= 9 else None
+
+        prepared.append({
+            "session_id": session_id,
+            "ts_ms": int(r.get("ts_ms") or now),
+            "image_id": (str(r["image_id"]) if r.get("image_id") is not None else None),
+            "label7": label or None,
+            "valence": _clamp(r.get("valence")),
+            "arousal": _clamp(r.get("arousal")),
+            "source": r.get("source"),
+        })
+    if bad:
+        logger.warning("insert_selfreport: 跳过 %d 行非法 label7（须为 %s 之一）",
+                       bad, "/".join(EMOTION_ORDER))
+    if not prepared:
+        return 0
+    return AffectSelfReportModel.insert_many(prepared)
+
+
 def insert_image(rec: dict) -> dict:
     """写一条生成图偏好记录。"""
     _ensure_init()
@@ -213,8 +257,14 @@ def list_sessions(limit: int = 100) -> dict:
     rows = db.execute_query(
         'SELECT s.session_id, s.subject_id, s.started_ms, s.stopped_ms, '
         '  (SELECT count(*) FROM affect_fea f WHERE f.session_id = s.session_id), '
-        '  (SELECT count(*) FROM affect_image i WHERE i.session_id = s.session_id) '
+        '  (SELECT count(*) FROM affect_image i WHERE i.session_id = s.session_id), '
+        '  (SELECT count(*) FROM affect_selfreport r WHERE r.session_id = s.session_id) '
         'FROM affect_session s ORDER BY s.started_ms DESC LIMIT %s',
         (limit,))
-    cols = ["session_id", "subject_id", "started_ms", "stopped_ms", "fea_count", "image_count"]
-    return {"sessions": [dict(zip(cols, r)) for r in rows]}
+    cols = ["session_id", "subject_id", "started_ms", "stopped_ms",
+            "fea_count", "image_count", "selfreport_count"]
+    sessions = [dict(zip(cols, r)) for r in rows]
+    # 没有自评的会话只能配循环标签，不能用于正式训练——显式标出来，别让人以为能用
+    for s in sessions:
+        s["trainable"] = bool(s["selfreport_count"])
+    return {"sessions": sessions}

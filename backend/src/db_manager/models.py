@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """「情感偏好生成」的表模型（对象模式）。
 
-三张表：
-  affect_session  采集会话（subject / 起止 / 元数据）
-  affect_fea      FEA 时间轴：每帧 63 维 blendshape(vector) + 7 类情绪概率 + 时间戳
-                  —— 供后续训练情绪预测模型
-  affect_image    生成图偏好：生成时 7 维情绪情境(vector) + 提示词 + 反应 + 是否喜欢
-                  —— context 向量供「相似情绪情境下用户喜欢的图」相似度检索
+四张表：
+  affect_session     采集会话（subject / 起止 / 元数据）
+  affect_fea         FEA 时间轴：每帧 63 维 blendshape(vector) + 7 类情绪概率 + 时间戳
+                     —— 供后续训练情绪预测模型
+  affect_image       生成图偏好：生成时 7 维情绪情境(vector) + 提示词 + 反应 + 是否喜欢
+                     —— context 向量供「相似情绪情境下用户喜欢的图」相似度检索
+  affect_selfreport  受试者自评：7 类 + SAM(valence/arousal)
+                     —— **唯一独立于 FEA 的真值来源**。规则式 classify_fea 的输出与
+                     FEA 同源（y=f(X)），不能同时当输入与真值；训练情绪预测必须用自评。
 """
 from .. import config
 from .base_model import BaseModel
@@ -51,6 +54,35 @@ class AffectFeaModel(BaseModel):
     @classmethod
     def get_indexes(cls):
         return [{"name": "idx_affect_fea_session_ts", "columns": ["session_id", "ts_ms"]}]
+
+
+class AffectSelfReportModel(BaseModel):
+    """受试者自评：每张刺激图后一条。label7 取 config.TRAIN_CLASSES 之一。
+
+    valence/arousal 为 SAM 1–9（可空）。image_id 关联当次刺激，便于 block-level 分组。
+    """
+
+    @classmethod
+    def get_table_name(cls) -> str:
+        return "affect_selfreport"
+
+    @classmethod
+    def get_fields(cls):
+        return {
+            "id":         {"type": "INTEGER", "primary_key": True, "autoincrement": True},
+            "session_id": {"type": "TEXT", "not_null": True},
+            "ts_ms":      {"type": "INTEGER", "not_null": True},
+            "image_id":   {"type": "TEXT"},
+            "label7":     {"type": "TEXT"},
+            "valence":    {"type": "INTEGER"},
+            "arousal":    {"type": "INTEGER"},
+            "source":     {"type": "TEXT"},
+        }
+
+    @classmethod
+    def get_indexes(cls):
+        return [{"name": "idx_affect_selfreport_session_ts",
+                 "columns": ["session_id", "ts_ms"]}]
 
 
 class AffectImageModel(BaseModel):

@@ -759,6 +759,38 @@ async def affect_sample(body: dict = Body(default=None)):
     return {"ok": True, "written": n}
 
 
+@app.post("/api/affect/selfreport")
+async def affect_selfreport(body: dict = Body(default=None)):
+    """写受试者自评（7 类 + SAM）到 PG 时间轴。
+
+    请求体 {"session_id"?, "rows":[{ts_ms, image_id?, label7, valence?, arousal?, source?}]}
+    也接受单条形式 {"label7": ..., ...}（自动包成一行），方便头显直接上报。
+
+    这是 PG 链路唯一独立于 FEA 的真值来源：没有它，采到的时间轴只能配与 X 同源的
+    规则标签，无法用于训练情绪预测模型。
+    """
+    if (err := _require_pg()) is not None:
+        return err
+    body = body or {}
+    sid = body.get("session_id") or _affect_active["session_id"]
+    if not sid:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "无活动会话"})
+    rows = body.get("rows")
+    if not rows and body.get("label7"):
+        rows = [body]                     # 单条上报
+    if not rows:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "缺少 rows 或 label7"})
+    loop = asyncio.get_event_loop()
+    try:
+        n = await loop.run_in_executor(executor, lambda: pg_store.insert_selfreport(sid, rows))
+    except RuntimeError as e:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(e)})
+    if n == 0:
+        return JSONResponse(status_code=400, content={
+            "ok": False, "error": f"没有合法自评写入（label7 须为 {'/'.join(config.TRAIN_CLASSES)} 之一）"})
+    return {"ok": True, "written": n, "session_id": sid}
+
+
 @app.post("/api/affect/image")
 async def affect_image(body: dict = Body(default=None)):
     """写一条生成图偏好记录（含情绪情境向量、提示词、反应、是否喜欢）。"""
