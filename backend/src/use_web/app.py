@@ -29,6 +29,7 @@ from ..use_llm import deepseek
 from ..use_store import pg_store
 from ..use_train import train_store, training
 from . import headset
+from . import stimulus_control
 from .image_utils import decode_base64_image
 
 logging.basicConfig(level=logging.INFO)
@@ -325,6 +326,26 @@ def _set_current_stimulus(path, emotion: str) -> None:
 # 下一张图的生成进度：webside 闭环把 ComfyUI 的采样进度打到这里，
 # 头显随 /api/stimulus/current 一起取回，显示「下一张生成中 x%」。
 _stimulus_progress: dict = {"running": False, "current": 0, "max": 0, "step": 0, "note": "", "ts": 0}
+
+
+# ── 刺激生成的共享控制状态（网页与 VR 头显都可读改）─────────────────────
+# 生成本身跑在浏览器里，这里只持有「要不要跑 + 用什么参数」的意图；
+# 头显按开始 → running=True → 网页轮询到后启动闭环。详见 stimulus_control 模块。
+@app.get("/api/stimulus/options")
+async def stimulus_options():
+    """情绪 / 场景四要素 / 调制模式的选项表（zh+ja+en，两端共用一份真源）。"""
+    return stimulus_control.options()
+
+
+@app.get("/api/stimulus/control")
+async def stimulus_control_get():
+    return stimulus_control.get_control()
+
+
+@app.post("/api/stimulus/control")
+async def stimulus_control_post(body: dict = Body(default=None)):
+    """局部更新控制状态：只传要改的字段，非法值忽略。source 传 "web" 或 "vr"。"""
+    return stimulus_control.update_control(body or {})
 
 
 @app.get("/api/stimulus/current")

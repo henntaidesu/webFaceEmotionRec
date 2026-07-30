@@ -65,10 +65,10 @@
               <button class="use-emotion-btn" @click="randomScene">{{ locale.stimulus.pick }}</button>
             </div>
             <div class="two-col scene-dims">
-              <div class="dim-field" v-for="dim in SCENE_DIMS" :key="dim.key">
+              <div class="dim-field" v-for="dim in sceneDims" :key="dim.key">
                 <label class="dim-label">{{ dimLabel(dim) }}</label>
                 <select v-model.number="sel[dim.key]" class="ctrl-select">
-                  <option v-for="(o, i) in dim.list" :key="i" :value="i">{{ optLabel(o) }}</option>
+                  <option v-for="(o, i) in dim.items" :key="i" :value="i">{{ optLabel(o) }}</option>
                 </select>
               </div>
             </div>
@@ -294,7 +294,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, reactive, watch, nextTick, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import {
   checkOnline,
   fetchWorkflow,
@@ -390,51 +390,29 @@ const curEmotionObj = computed(() => EMOTIONS.find((e) => e.key === selectedEmot
 const lang = computed(() => (props.locale.langSwitchPath === '/cn' ? 'ja' : 'zh'))
 const optLabel = (s) => (s ? (s[lang.value] || s.zh) : '')
 
-// ── 场景四要素（时间/地点/任务/事情），各 10 预设；不含具体成品场景，组合后喂 DeepSeek ──
-const TIME_PRESETS = [
-  { zh: '清晨', ja: '早朝' }, { zh: '正午', ja: '正午' }, { zh: '黄昏', ja: '夕暮れ' },
-  { zh: '深夜', ja: '深夜' }, { zh: '雨天', ja: '雨の日' }, { zh: '雪天', ja: '雪の日' },
-  { zh: '春日', ja: '春の日' }, { zh: '盛夏', ja: '真夏' }, { zh: '秋日', ja: '秋の日' },
-  { zh: '暴风雨夜', ja: '嵐の夜' },
-]
-const PLACE_PRESETS = [
-  { zh: '海滩', ja: 'ビーチ' }, { zh: '森林', ja: '森' }, { zh: '城市街道', ja: '街の通り' },
-  { zh: '山顶', ja: '山頂' }, { zh: '室内房间', ja: '室内' }, { zh: '湖畔', ja: '湖畔' },
-  { zh: '沙漠', ja: '砂漠' }, { zh: '花园', ja: '庭園' }, { zh: '地铁站', ja: '駅' },
-  { zh: '废墟', ja: '廃墟' },
-]
-const TASK_PRESETS = [
-  { zh: '散步', ja: '散歩' }, { zh: '休息', ja: '休憩' }, { zh: '探索', ja: '探索' },
-  { zh: '庆祝', ja: 'お祝い' }, { zh: '独处', ja: '一人で過ごす' }, { zh: '奔跑', ja: '走る' },
-  { zh: '眺望远方', ja: '遠くを眺める' }, { zh: '等待', ja: '待つ' }, { zh: '逃离', ja: '逃げる' },
-  { zh: '沉思', ja: '物思いにふける' },
-]
-const EVENT_PRESETS = [
-  { zh: '烟花绽放', ja: '花火が上がる' }, { zh: '日出', ja: '日の出' }, { zh: '暴风来临', ja: '嵐が来る' },
-  { zh: '花朵盛开', ja: '花が咲く' }, { zh: '极光出现', ja: 'オーロラが現れる' }, { zh: '大雨倾盆', ja: '土砂降り' },
-  { zh: '落叶纷飞', ja: '落ち葉が舞う' }, { zh: '火焰蔓延', ja: '炎が広がる' }, { zh: '雾气弥漫', ja: '霧が立ち込める' },
-  { zh: '万物寂静', ja: '静寂に包まれる' },
-]
-const SCENE_DIMS = [
-  { key: 'time',  zh: '时间', ja: '時間',   list: TIME_PRESETS },
-  { key: 'place', zh: '地点', ja: '場所',   list: PLACE_PRESETS },
-  { key: 'task',  zh: '任务', ja: 'タスク', list: TASK_PRESETS },
-  { key: 'event', zh: '事情', ja: '出来事', list: EVENT_PRESETS },
-]
+// ── 场景四要素（「刺激种子」：时间/地点/任务/事情）──
+// 预设表由后端 /api/stimulus/options 提供（backend/src/use_web/stimulus_control.py），
+// 头显里的 VR 控制台读的是同一份，避免网页与 VR 各存一份导致选项漂移。
+const sceneDims = ref([])          // [{ key, zh, ja, en, items: [{zh,ja,en}] }]
 const dimLabel = (dim) => (lang.value === 'ja' ? dim.ja : dim.zh)
 const sel = reactive({ time: 0, place: 0, task: 0, event: 0 })
+
+const dimByKey = (key) => sceneDims.value.find((d) => d.key === key)
 // 四要素组合成基础场景文本（当前语言），喂给 DeepSeek 生成提示词
 const composedScene = () =>
-  [optLabel(TIME_PRESETS[sel.time]), optLabel(PLACE_PRESETS[sel.place]),
-   optLabel(TASK_PRESETS[sel.task]), optLabel(EVENT_PRESETS[sel.event])]
+  ['time', 'place', 'task', 'event']
+    .map((k) => {
+      const d = dimByKey(k)
+      return d ? optLabel(d.items[sel[k]]) : ''
+    })
     .filter(Boolean).join('，')
 
 function selectEmotion(key) { selectedEmotion.value = key }
 function randomScene() {
-  sel.time  = Math.floor(Math.random() * TIME_PRESETS.length)
-  sel.place = Math.floor(Math.random() * PLACE_PRESETS.length)
-  sel.task  = Math.floor(Math.random() * TASK_PRESETS.length)
-  sel.event = Math.floor(Math.random() * EVENT_PRESETS.length)
+  for (const k of ['time', 'place', 'task', 'event']) {
+    const d = dimByKey(k)
+    if (d && d.items.length) sel[k] = Math.floor(Math.random() * d.items.length)
+  }
 }
 
 // ── 动态情绪闭环采集（DeepSeek 动态提示词 + Quest Pro 目标情绪强度反馈）──
@@ -460,6 +438,69 @@ let feaTimer = null
 let loopAbort = false
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// ── 与头显共享的控制状态（后端 /api/stimulus/control）────────────────
+// 网页与 VR 控制台读改同一份参数：这边改了头显能看到，头显改了这边也会跟着变。
+// 出图始终跑在本页（DeepSeek + ComfyUI 都在浏览器里），头显只是把 running 置真/假，
+// 所以本页必须开着，头显按开始才会真的出图。
+const ctlVersion = ref(-1)
+const ctlSource = ref('')
+let applyingRemote = false     // 正在把远端状态写进本地 ref，期间不要回推，避免来回打架
+let ctlTimer = null
+
+async function pushControl(patch) {
+  try {
+    const res = await fetch('/api/stimulus/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...patch, source: 'web' }),
+    })
+    const data = await res.json()
+    if (typeof data?.version === 'number') ctlVersion.value = data.version
+  } catch { /* 后端不通时本地照常操作，下次轮询再对齐 */ }
+}
+
+// 本地控件改动 → 推给后端（applyingRemote 期间跳过）
+function watchAndPush(getter, key) {
+  watch(getter, (v) => { if (!applyingRemote) pushControl({ [key]: v }) })
+}
+watchAndPush(() => selectedEmotion.value, 'emotion')
+watchAndPush(() => loopMode.value, 'mode')
+watchAndPush(() => Number(targetIntensity.value), 'target_intensity')
+watchAndPush(() => Number(measureWindowSec.value), 'measure_window_s')
+watchAndPush(() => subjectId.value, 'subject_id')
+watch(() => ({ ...sel }), (v) => { if (!applyingRemote) pushControl({ scene: v }) }, { deep: true })
+
+// 远端状态 → 本地控件
+function applyControl(c) {
+  applyingRemote = true
+  if (c.emotion) selectedEmotion.value = c.emotion
+  if (c.mode) loopMode.value = c.mode
+  if (typeof c.target_intensity === 'number') targetIntensity.value = c.target_intensity
+  if (typeof c.measure_window_s === 'number') measureWindowSec.value = c.measure_window_s
+  if (c.subject_id) subjectId.value = c.subject_id
+  if (c.scene) for (const k of ['time', 'place', 'task', 'event']) {
+    if (typeof c.scene[k] === 'number') sel[k] = c.scene[k]
+  }
+  ctlSource.value = c.source || ''
+  // 放到微任务之后再解锁，确保上面这些赋值触发的 watch 都已跳过
+  nextTick(() => { applyingRemote = false })
+}
+
+async function pollControl() {
+  try {
+    const res = await fetch('/api/stimulus/control')
+    const c = await res.json()
+    if (typeof c?.version !== 'number') return
+    if (c.version !== ctlVersion.value) {
+      ctlVersion.value = c.version
+      applyControl(c)
+    }
+    // 头显按了开始/结束 → 这边跟着启停真正的生成闭环
+    if (c.running && !loopRunning.value) startLoop({ fromRemote: true })
+    else if (!c.running && loopRunning.value) stopLoop({ fromRemote: true })
+  } catch { /* 忽略单次失败 */ }
+}
 
 // 从最近一帧 FEA 取「当前所选目标情绪」的分数（归一化到 0–1）
 function targetScore(data) {
@@ -636,11 +677,19 @@ async function runLoop() {
   }
   loopRunning.value = false
   pushProgress(false, 'idle')             // 循环退出（含出错退出）也要清掉头显进度条
+  // 必须同步清掉共享状态里的 running：否则连续失败自行退出后，后端仍是 running=true，
+  // 下一次轮询会判定「该跑但没跑」而反复重启，变成死循环。
+  pushControl({ running: false })
 }
 
-async function startLoop() {
+// fromRemote=true 表示由头显按下开始触发，此时不要再把 running 推回后端（避免回环）
+async function startLoop({ fromRemote = false } = {}) {
   if (loopRunning.value) return
-  if (!online.value) { loopStatus.value = 'ComfyUI 未连接'; return }
+  if (!online.value) {
+    loopStatus.value = 'ComfyUI 未连接'
+    if (fromRemote) pushControl({ running: false })   // 头显那边要能看到没起来
+    return
+  }
   loopStatus.value = ''
   dbWarn.value = ''
   try {
@@ -650,12 +699,17 @@ async function startLoop() {
       target_intensity: Number(targetIntensity.value) || 0.6,
     })
     loopSessionId.value = r.session_id
-  } catch (e) { loopStatus.value = `会话建立失败：${e.message}`; return }
+  } catch (e) {
+    loopStatus.value = `会话建立失败：${e.message}`
+    if (fromRemote) pushControl({ running: false })
+    return
+  }
   loopRunning.value = true
   loopAbort = false
   loopStep.value = 0
   intensitySeries.length = 0
   feaTimer = setInterval(pollFeaOnce, 1000)
+  if (!fromRemote) pushControl({ running: true })
   runLoop()
 }
 
@@ -664,13 +718,14 @@ function toggleLoop() {
   else startLoop()
 }
 
-function stopLoop() {
+function stopLoop({ fromRemote = false } = {}) {
   loopAbort = true
   loopRunning.value = false
   if (feaTimer) { clearInterval(feaTimer); feaTimer = null }
   if (loopSessionId.value) { stopAffectSession(loopSessionId.value).catch(() => {}); loopSessionId.value = '' }
-  loopStatus.value = (loopStatus.value || '') + ' — 已停止'
+  loopStatus.value = (loopStatus.value || '') + (fromRemote ? ' — 已由头显停止' : ' — 已停止')
   pushProgress(false, 'stopped')
+  if (!fromRemote) pushControl({ running: false })
 }
 
 // 情绪强度曲线（内联 SVG polyline，0–1 → 60px 高）
@@ -902,18 +957,33 @@ async function clearHistoryEmotion() {
 }
 
 
+// 场景四要素预设：与 VR 控制台共用后端那一份
+async function loadStimulusOptions() {
+  try {
+    const res = await fetch('/api/stimulus/options')
+    const data = await res.json()
+    if (Array.isArray(data?.scene_dims)) sceneDims.value = data.scene_dims
+  } catch {
+    sceneDims.value = []   // 拉不到就空着；本页出图本来也依赖后端
+  }
+}
+
 // ── 生命周期 ──
 let connTimer = null
-onMounted(() => {
+onMounted(async () => {
   retryConn()
   connTimer = setInterval(retryConn, 20_000)
   refreshHeadset()
   headsetViewAlive = true
   pollHeadsetViewLoop()
+  await loadStimulusOptions()
+  await pollControl()                          // 先对齐一次，再开始定期同步
+  ctlTimer = setInterval(pollControl, 1500)
 })
 onUnmounted(() => {
   clearInterval(connTimer)
   clearTimeout(sessionTimer)
+  if (ctlTimer) { clearInterval(ctlTimer); ctlTimer = null }
 })
 </script>
 
